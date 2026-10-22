@@ -1,0 +1,33 @@
+[package]
+name = "qbit-remote"
+version = "0.1.0"
+edition = "2021"
+description = "Windows desktop client for remote qBittorrent servers"
+
+[features]
+ui-smoke = ["dep:image"]
+
+[dependencies]
+eframe = { version = "0.31.1", default-features = false, features = ["default_fonts", "glow", "persistence"] }
+egui_extras = "0.31.1"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "cookies", "json", "multipart", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+url = "2"
+rfd = "0.15"
+image = { version = "0.25", default-features = false, features = ["png"], optional = true }
+
+[target.'cfg(windows)'.dependencies]
+tray-icon = "0.20"
+raw-window-handle = "0.6"
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_UI_WindowsAndMessaging"] }
+
+[dev-dependencies]
+ron = "0.8"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true
+

@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 pub struct Settings {
     pub visible_columns: Vec<String>,
     pub column_widths: std::collections::BTreeMap<String, f32>,
+    pub sort_column: String,
+    pub sort_descending: bool,
     pub servers: Vec<ServerProfile>,
     pub profiles_initialized: bool,
     pub selected_server: usize,
@@ -69,6 +71,8 @@ impl Default for Settings {
         Self {
             visible_columns: crate::columns::defaults(),
             column_widths: Default::default(),
+            sort_column: "name".into(),
+            sort_descending: false,
             servers: Vec::new(),
             profiles_initialized: false,
             selected_server: 0,

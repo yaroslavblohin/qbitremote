@@ -15,6 +15,7 @@ const RED: Color32 = Color32::from_rgb(249, 113, 132);
 const SURFACE: Color32 = Color32::from_rgb(24, 33, 46);
 
 pub struct ClientApp {
+    about_open: bool,
     dragged_column: Option<String>,
     column_layout: Vec<String>,
     remote: crate::remote::Remote,
@@ -168,7 +169,9 @@ impl ClientApp {
             && settings.auto_connect
             && password_error.is_none()
             && !cfg!(feature = "ui-smoke");
+        let (sort, descending) = crate::columns::restored_sort(&settings);
         let mut app = Self {
+            about_open: false,
             dragged_column: None,
             column_layout: Vec::new(),
             remote: crate::remote::Remote::default(),
@@ -192,8 +195,8 @@ impl ClientApp {
             save_path: String::new(),
             delete: None,
             delete_files: false,
-            sort: 0,
-            descending: false,
+            sort,
+            descending,
             #[cfg(windows)]
             tray,
         }
@@ -238,7 +241,7 @@ impl ClientApp {
         self.is_error = false;
         let password = self.password.clone();
         self.send(Command::Connect(
-            self.settings.clone(),
+            Box::new(self.settings.clone()),
             password,
             self.connection_epoch,
         ));
@@ -349,6 +352,20 @@ impl ClientApp {
         }
     }
     fn dialogs(&mut self, ctx: &egui::Context) {
+        egui::Window::new("О программе")
+            .open(&mut self.about_open)
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.heading("qBit Remote");
+                ui.label(format!("Версия {}", env!("CARGO_PKG_VERSION")));
+                ui.label("Клиент для удалённого управления qBittorrent.");
+                ui.separator();
+                ui.label("Щелчок по заголовку — сортировка.");
+                ui.label("Перетаскивание заголовка — порядок колонок.");
+                ui.label("Перетаскивание границы — ширина колонки.");
+                ui.label("Вид → Колонки — выбор отображаемых полей.");
+            });
         let mut open = self.settings_open;
         egui::Window::new("Подключение и настройки")
             .open(&mut open)
@@ -492,7 +509,7 @@ impl ClientApp {
                     ctx.set_zoom_factor(self.settings.zoom);
                 }
                 ui.label(
-                    RichText::new("Выход из приложения — через меню значка в трее.").color(MUTED),
+                    RichText::new("Выход — через меню «Файл» или значок в трее.").color(MUTED),
                 );
             });
         self.settings_open = open && self.settings_open;
@@ -624,12 +641,162 @@ impl ClientApp {
             ui.small("Отсутствующие на сервере данные: —");
         });
     }
+
+    fn main_menu(&mut self, ctx: &egui::Context) {
+        egui::TopBottomPanel::top("main-menu").show(ctx, |ui| {
+            egui::menu::bar(ui, |ui| {
+                ui.menu_button("Файл", |ui| {
+                    if ui
+                        .add_enabled(self.connected, egui::Button::new("Добавить торрент…"))
+                        .clicked()
+                    {
+                        self.add_open = true;
+                        ui.close_menu();
+                    }
+                    if ui
+                        .add_enabled(self.connected, egui::Button::new("Обновить список"))
+                        .clicked()
+                    {
+                        self.send(Command::Refresh);
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    if ui.button("Выход").clicked() {
+                        ui.close_menu();
+                        #[cfg(windows)]
+                        if let Some(tray) = &self.tray {
+                            tray.control.exit();
+                            return;
+                        }
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                });
+                ui.menu_button("Правка", |ui| {
+                    let selected = self
+                        .torrents
+                        .iter()
+                        .find(|t| Some(&t.hash) == self.selected.as_ref())
+                        .cloned();
+                    ui.add_enabled_ui(self.connected && selected.is_some(), |ui| {
+                        if ui.button("Запустить торрент").clicked() {
+                            self.send(Command::Start(selected.as_ref().unwrap().hash.clone()));
+                            ui.close_menu();
+                        }
+                        if ui.button("Остановить торрент").clicked() {
+                            self.send(Command::Stop(selected.as_ref().unwrap().hash.clone()));
+                            ui.close_menu();
+                        }
+                        if ui.button("Удалить торрент…").clicked() {
+                            let t = selected.as_ref().unwrap();
+                            self.delete = Some((t.hash.clone(), t.name.clone()));
+                            self.delete_files = false;
+                            ui.close_menu();
+                        }
+                        if ui.button("Копировать название").clicked() {
+                            ctx.copy_text(selected.as_ref().unwrap().name.clone());
+                            ui.close_menu();
+                        }
+                    });
+                    ui.separator();
+                    if ui.button("Настройки приложения…").clicked() {
+                        self.settings_open = true;
+                        ui.close_menu();
+                    }
+                });
+                ui.menu_button("Вид", |ui| {
+                    self.column_picker(ui);
+                    ui.menu_button("Масштаб интерфейса", |ui| {
+                        if ui
+                            .add(egui::Slider::new(&mut self.settings.zoom, 0.8..=1.5).suffix("×"))
+                            .changed()
+                        {
+                            ctx.set_zoom_factor(self.settings.zoom);
+                        }
+                        if ui.button("100%").clicked() {
+                            self.settings.zoom = 1.0;
+                            ctx.set_zoom_factor(1.0);
+                        }
+                    });
+                    ui.separator();
+                    for (page, title) in crate::remote::PAGES {
+                        if page == crate::remote::Page::Preferences {
+                            continue;
+                        }
+                        if ui
+                            .selectable_label(self.remote.page == page, title)
+                            .clicked()
+                        {
+                            self.remote.page = page;
+                            ui.close_menu();
+                        }
+                    }
+                });
+                ui.menu_button("Серверы", |ui| {
+                    let profiles: Vec<_> = self
+                        .settings
+                        .servers
+                        .iter()
+                        .map(|s| s.name.clone())
+                        .collect();
+                    for (index, name) in profiles.iter().enumerate() {
+                        if ui
+                            .selectable_label(self.settings.selected_server == index, name)
+                            .clicked()
+                        {
+                            self.select_server(index);
+                            ui.close_menu();
+                        }
+                    }
+                    ui.separator();
+                    if ui
+                        .add_enabled(
+                            !self.connecting && !self.connected,
+                            egui::Button::new("Подключиться"),
+                        )
+                        .clicked()
+                    {
+                        self.connect();
+                        ui.close_menu();
+                    }
+                    if ui
+                        .add_enabled(
+                            self.connecting || self.connected,
+                            egui::Button::new("Отключиться"),
+                        )
+                        .clicked()
+                    {
+                        self.disconnect();
+                        ui.close_menu();
+                    }
+                    if ui.button("Управление серверами…").clicked() {
+                        self.settings_open = true;
+                        ui.close_menu();
+                    }
+                    if ui
+                        .add_enabled(self.connected, egui::Button::new("Настройки qBittorrent…"))
+                        .clicked()
+                    {
+                        self.remote.page = crate::remote::Page::Preferences;
+                        ui.close_menu();
+                    }
+                });
+                ui.menu_button("Справка", |ui| {
+                    if ui.button("О программе и управлении…").clicked() {
+                        self.about_open = true;
+                        ui.close_menu();
+                    }
+                });
+            });
+        });
+    }
 }
 impl eframe::App for ClientApp {
     fn auto_save_interval(&self) -> std::time::Duration {
         std::time::Duration::from_secs(3)
     }
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        self.settings.sort_column = crate::columns::COLUMNS[self.sort].key.to_owned();
+        self.settings.sort_descending = self.descending;
         if !self.settings.servers.is_empty() {
             self.settings.save_server();
         }
@@ -660,6 +827,7 @@ impl eframe::App for ClientApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
         }
+        self.main_menu(ctx);
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.colored_label(
@@ -708,7 +876,13 @@ impl eframe::App for ClientApp {
                         });
                         ui.add_space(12.0);
                         ui.label(RichText::new("Сервер").size(12.0).color(MUTED));
-                        self.server_picker(ui, "sidebar-servers");
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(&self.settings.server_name).color(ACCENT),
+                            )
+                            .truncate(),
+                        )
+                        .on_hover_text("Переключение и управление — в меню «Серверы»");
                         ui.add_space(24.0);
                         ui.label(RichText::new("Торренты").size(12.0).color(MUTED));
                         for (index, label) in [
@@ -745,6 +919,9 @@ impl eframe::App for ClientApp {
                         for (index, (page, title)) in
                             crate::remote::PAGES.into_iter().skip(1).enumerate()
                         {
+                            if page == crate::remote::Page::Preferences {
+                                continue;
+                            }
                             if navigation_row(
                                 ui,
                                 title,
@@ -759,15 +936,6 @@ impl eframe::App for ClientApp {
                         }
                         ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
                             ui.label(RichText::new("WINDOWS · 0.1.0").size(10.0).color(MUTED));
-                            if ui
-                                .add_sized(
-                                    [164.0, 22.0],
-                                    egui::Button::new("Подключение и интерфейс").frame(false),
-                                )
-                                .clicked()
-                            {
-                                self.settings_open = true;
-                            }
                             ui.add_space(8.0);
                         });
                     });
@@ -861,7 +1029,6 @@ impl eframe::App for ClientApp {
                     {
                         self.send(Command::Refresh);
                     }
-                    self.column_picker(ui);
                     if self.connected {
                         ui.separator();
                         ui.colored_label(

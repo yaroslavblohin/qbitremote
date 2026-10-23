@@ -70,6 +70,14 @@ pub fn defaults() -> Vec<String> {
     COLUMNS[..6].iter().map(|c| c.key.to_owned()).collect()
 }
 
+pub fn restored_sort(settings: &crate::model::Settings) -> (usize, bool) {
+    COLUMNS
+        .iter()
+        .position(|column| column.key == settings.sort_column)
+        .map(|index| (index, settings.sort_descending))
+        .unwrap_or((0, false))
+}
+
 pub fn move_column(keys: &mut Vec<String>, source: &str, target: &str, after: bool) {
     if source == target || !keys.iter().any(|key| key == target) {
         return;
@@ -214,6 +222,31 @@ impl TorrentColumn {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn sort_column_and_direction_survive_restart_and_reorder() {
+        for descending in [false, true] {
+            let mut settings = crate::model::Settings {
+                sort_column: "added_on".into(),
+                sort_descending: descending,
+                ..Default::default()
+            };
+            settings.visible_columns.insert(0, "added_on".into());
+            move_column(&mut settings.visible_columns, "name", "upspeed", true);
+            let restored: crate::model::Settings =
+                ron::from_str(&ron::to_string(&settings).unwrap()).unwrap();
+            let (index, direction) = restored_sort(&restored);
+            assert_eq!(COLUMNS[index].key, "added_on");
+            assert_eq!(direction, descending);
+        }
+        let old: crate::model::Settings = ron::from_str("()").unwrap();
+        assert_eq!(restored_sort(&old), (0, false));
+        let unknown = crate::model::Settings {
+            sort_column: "removed_column".into(),
+            sort_descending: true,
+            ..Default::default()
+        };
+        assert_eq!(restored_sort(&unknown), (0, false));
+    }
     #[test]
     fn widths_survive_restart_reorder_and_hidden_columns() {
         let mut settings = crate::model::Settings::default();

@@ -9,6 +9,7 @@ use std::{
     collections::{HashMap, VecDeque},
     time::{Duration, Instant},
 };
+mod file_tree;
 mod pages;
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -74,6 +75,7 @@ pub struct Remote {
     pub error: bool,
     selected_hash: String,
     file_filter: String,
+    collapsed_folders: std::collections::HashSet<String>,
     search_pattern: String,
     search_category: String,
     search_plugins: String,
@@ -102,6 +104,7 @@ impl Default for Remote {
             error: false,
             selected_hash: String::new(),
             file_filter: String::new(),
+            collapsed_folders: Default::default(),
             search_pattern: String::new(),
             search_category: "all".into(),
             search_plugins: "enabled".into(),
@@ -121,12 +124,24 @@ impl Default for Remote {
 impl Remote {
     #[cfg(feature = "ui-smoke")]
     pub fn smoke_fixture(&mut self) {
+        if std::env::var("QBIT_SMOKE_PAGE").as_deref() == Ok("files") {
+            self.tab = 4;
+        }
         self.page = match std::env::var("QBIT_SMOKE_PAGE").as_deref() {
             Ok("speed") => Page::Speed,
             Ok("settings") => Page::Preferences,
             _ => Page::Torrents,
         };
         for (key, value) in [
+            (
+                "files/fixture-1",
+                json!([
+                    {"name":"Linux/Images/ubuntu.iso", "index":0, "size":6000000000_u64, "progress":0.64, "priority":1, "availability":1.2},
+                    {"name":"Linux/Docs/install.txt", "index":1, "size":12000, "progress":1.0, "priority":1, "availability":2.0},
+                    {"name":"Linux/Docs/license.txt", "index":2, "size":4000, "progress":1.0, "priority":0, "availability":2.0},
+                    {"name":"readme.txt", "index":3, "size":8000, "progress":1.0, "priority":1, "availability":1.0}
+                ]),
+            ),
             (
                 "properties/fixture-1",
                 json!({"save_path":"/downloads/Linux","total_size":6000000000_u64,"total_downloaded":3840000000_u64,"total_uploaded":23000000,"dl_speed":12450000,"up_speed":120000,"dl_limit":0,"up_limit":1048576,"seeds":24,"peers":8,"pieces_num":1500,"pieces_have":960,"share_ratio":0.006,"comment":"Тестовые данные"}),
@@ -174,6 +189,7 @@ impl Remote {
         self.history.clear();
         self.torrent_history.clear();
         self.selected_hash.clear();
+        self.collapsed_folders.clear();
     }
     pub fn commands(&mut self) -> Vec<Command> {
         std::mem::take(&mut self.queue)
@@ -371,6 +387,7 @@ impl Remote {
         if self.selected_hash != *hash {
             self.selected_hash = hash.clone();
             self.file_filter.clear();
+            self.collapsed_folders.clear();
             self.torrent_history.clear();
         }
         ui.horizontal_wrapped(|ui| {
@@ -841,67 +858,92 @@ impl Remote {
         }
     }
     fn files(&mut self, ui: &mut egui::Ui, hash: &str, data: &Value) {
-        ui.add(egui::TextEdit::singleline(&mut self.file_filter).hint_text("Фильтр файлов"));
-        let rows: Vec<Value> = data
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter(|f| {
-                text(f, "name")
-                    .to_lowercase()
-                    .contains(&self.file_filter.to_lowercase())
-            })
-            .cloned()
-            .collect();
-        data_table(
-            ui,
-            "files",
-            &rows,
-            &[
-                ("name", "Имя"),
-                ("size", "Размер"),
-                ("progress", "Прогресс"),
-                ("availability", "Доступность"),
-            ],
-            |ui, row| {
-                let mut priority = number(row, "priority");
-                let old = priority;
-                egui::ComboBox::from_id_salt(("prio", number(row, "index")))
-                    .selected_text(priority_name(priority))
-                    .show_ui(ui, |ui| {
-                        for p in [0, 1, 6, 7] {
-                            ui.selectable_value(&mut priority, p, priority_name(p));
-                        }
-                    });
-                if old != priority {
-                    self.action(
-                        "Приоритет файла",
-                        "torrents/filePrio",
-                        vec![
-                            ("hash".into(), hash.into()),
-                            ("id".into(), number(row, "index").to_string()),
-                            ("priority".into(), priority.to_string()),
-                        ],
-                    );
-                }
+        ui.horizontal_wrapped(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut self.file_filter)
+                    .hint_text("Поиск по имени или пути…"),
+            );
+            if ui.button("Развернуть всё").clicked() {
+                self.collapsed_folders.clear();
+            }
+            if ui
+                .add_enabled(
+                    self.file_filter.trim().is_empty(),
+                    egui::Button::new("Свернуть всё"),
+                )
+                .clicked()
+            {
+                self.collapsed_folders = file_tree::rows(data, "", &Default::default())
+                    .iter()
+                    .filter(|r| r["__folder"].as_bool() == Some(true))
+                    .filter_map(|r| r["__path"].as_str().map(str::to_owned))
+                    .collect();
+            }
+        });
+        let rows = file_tree::rows(data, &self.file_filter, &self.collapsed_folders);
+        let searching = !self.file_filter.trim().is_empty();
+        let toggled = file_tree_table(ui, hash, &rows, searching, |ui, row| {
+            if row["__folder"].as_bool() == Some(true) {
                 if ui.small_button("Имя…").clicked() {
                     self.open_form(
-                        "Переименовать файл",
-                        "torrents/renameFile",
+                        "Переименовать папку",
+                        "torrents/renameFolder",
                         vec![
                             ("hash".into(), hash.into()),
-                            ("oldPath".into(), text(row, "name")),
+                            ("oldPath".into(), text(row, "__path")),
                         ],
                         vec![Field::new(
                             "newPath",
-                            "Новое имя / относительный путь",
-                            text(row, "name"),
+                            "Новый относительный путь",
+                            text(row, "__path"),
                         )],
-                        "Файл будет переименован на сервере.",
+                        "Папка будет переименована на сервере.",
                     );
                 }
-            },
-        );
+                return;
+            }
+            let mut priority = number(row, "priority");
+            let old = priority;
+            egui::ComboBox::from_id_salt(("prio", number(row, "index")))
+                .selected_text(priority_name(priority))
+                .show_ui(ui, |ui| {
+                    for p in [0, 1, 6, 7] {
+                        ui.selectable_value(&mut priority, p, priority_name(p));
+                    }
+                });
+            if old != priority {
+                self.action(
+                    "Приоритет файла",
+                    "torrents/filePrio",
+                    vec![
+                        ("hash".into(), hash.into()),
+                        ("id".into(), number(row, "index").to_string()),
+                        ("priority".into(), priority.to_string()),
+                    ],
+                );
+            }
+            if ui.small_button("Имя…").clicked() {
+                self.open_form(
+                    "Переименовать файл",
+                    "torrents/renameFile",
+                    vec![
+                        ("hash".into(), hash.into()),
+                        ("oldPath".into(), text(row, "__path")),
+                    ],
+                    vec![Field::new(
+                        "newPath",
+                        "Новое имя / относительный путь",
+                        text(row, "__path"),
+                    )],
+                    "Файл будет переименован на сервере.",
+                );
+            }
+        });
+        if let Some(path) = toggled {
+            if !self.collapsed_folders.remove(&path) {
+                self.collapsed_folders.insert(path);
+            }
+        }
         if ui.button("Переименовать папку…").clicked() {
             self.open_form(
                 "Переименовать папку",
@@ -915,6 +957,104 @@ impl Remote {
             );
         }
     }
+}
+
+fn file_tree_table(
+    ui: &mut egui::Ui,
+    hash: &str,
+    rows: &[Value],
+    searching: bool,
+    mut action: impl FnMut(&mut egui::Ui, &Value),
+) -> Option<String> {
+    let mut toggled = None;
+    if rows.is_empty() {
+        ui.label(if searching {
+            "Файлы не найдены"
+        } else {
+            "Нет файлов · метаданные ещё не получены"
+        });
+        return None;
+    }
+    let width = ui.available_width().max(850.0);
+    egui::ScrollArea::horizontal()
+        .id_salt(("file-tree-scroll", hash))
+        .show(ui, |ui| {
+            ui.set_width(width);
+            TableBuilder::new(ui)
+                .id_salt(("file-tree", hash))
+                .striped(true)
+                .resizable(true)
+                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                .column(Column::remainder().at_least(280.0).clip(true))
+                .column(Column::initial(100.0))
+                .column(Column::initial(95.0))
+                .column(Column::initial(100.0))
+                .column(Column::initial(220.0))
+                .header(22.0, |mut header| {
+                    for title in ["Имя", "Размер", "Прогресс", "Доступность", "Действия"]
+                    {
+                        header.col(|ui| {
+                            ui.weak(title);
+                        });
+                    }
+                })
+                .body(|body| {
+                    body.rows(20.0, rows.len(), |mut row| {
+                        let file = &rows[row.index()];
+                        let folder = file["__folder"].as_bool() == Some(true);
+                        row.col(|ui| {
+                            ui.add_space(number(file, "__depth") as f32 * 16.0);
+                            if folder {
+                                let arrow = if file["__open"].as_bool() == Some(true) {
+                                    "▼"
+                                } else {
+                                    "▶"
+                                };
+                                let label = format!(
+                                    "{arrow}  {}  ({})",
+                                    text(file, "name"),
+                                    number(file, "__count")
+                                );
+                                let response = ui
+                                    .add(
+                                        egui::Label::new(
+                                            RichText::new(label)
+                                                .color(Color32::from_rgb(255, 181, 93)),
+                                        )
+                                        .truncate()
+                                        .selectable(false)
+                                        .sense(egui::Sense::click()),
+                                    )
+                                    .on_hover_text(if searching {
+                                        "Папки раскрыты для результатов поиска".into()
+                                    } else {
+                                        text(file, "__path")
+                                    });
+                                if response.clicked() && !searching {
+                                    toggled = Some(text(file, "__path"));
+                                }
+                            } else {
+                                ui.add_space(18.0);
+                                ui.add(egui::Label::new(text(file, "name")).truncate())
+                                    .on_hover_text(text(file, "__path"));
+                            }
+                        });
+                        row.col(|ui| {
+                            ui.label(format_value("size", &file["size"]));
+                        });
+                        row.col(|ui| {
+                            ui.label(format_value("progress", &file["progress"]));
+                        });
+                        row.col(|ui| {
+                            ui.label(format_value("availability", &file["availability"]));
+                        });
+                        row.col(|ui| {
+                            ui.horizontal(|ui| action(ui, file));
+                        });
+                    });
+                });
+        });
+    toggled
 }
 
 fn peer_address(ip: &str, port: i64) -> String {

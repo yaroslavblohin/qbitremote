@@ -7,7 +7,7 @@ use std::{
 use url::Url;
 
 pub enum Command {
-    Connect(Settings, String, u64),
+    Connect(Box<Settings>, String, u64),
     Disconnect(u64),
     Refresh,
     Start(String),
@@ -203,9 +203,7 @@ impl Api {
             }
             Command::Add(links, path) => {
                 let body = self.post("torrents/add", &[("urls", &links), ("savepath", &path)])?;
-                if body.trim() != "Ok." {
-                    return Err("Сервер не принял торрент".into());
-                }
+                return add_reply(&body);
             }
             Command::File(file, path) => {
                 let form = reqwest::blocking::multipart::Form::new()
@@ -220,16 +218,46 @@ impl Api {
                     .send()
                     .map_err(error)?;
                 let body = command_reply(response)?;
-                if body.trim() != "Ok." {
-                    return Err("Сервер не принял torrent-файл".into());
-                }
+                return add_reply(&body);
             }
             _ => {}
         }
         Ok("Команда выполнена".into())
     }
 }
-// qBittorrent 5.2 uses 204 for successful commands, including login.
+// Newer qBittorrent versions return structured results from torrents/add.
+// Keep this separate from login and other command response formats.
+fn add_reply(body: &str) -> Result<String, String> {
+    if body.trim() == "Ok." {
+        return Ok("Запрос на добавление торрента принят".into());
+    }
+    if body.trim() == "Fails." {
+        return Err("Сервер не принял торрент".into());
+    }
+    let result: serde_json::Value = serde_json::from_str(body)
+        .map_err(|_| "Не удалось распознать ответ добавления. Проверьте список торрентов перед повторной попыткой.".to_string())?;
+    let counts = (
+        result["success_count"].as_u64(),
+        result["pending_count"].as_u64(),
+        result["failure_count"].as_u64(),
+    );
+    let (Some(success), Some(pending), Some(failed)) = counts else {
+        return Err("Неизвестный формат ответа добавления. Проверьте список торрентов перед повторной попыткой.".into());
+    };
+    if success == 0 && pending == 0 {
+        return Err(format!("Сервер не добавил торренты. Отказов: {failed}"));
+    }
+    let mut message = format!("Добавлено: {success}");
+    if pending > 0 {
+        message.push_str(&format!(" · Ожидают обработки сервером: {pending}"));
+    }
+    if failed > 0 {
+        message.push_str(&format!(" · Не добавлено: {failed}"));
+    }
+    Ok(message)
+}
+
+// qBittorrent can use 204 for successful commands, including login.
 // Keep the legacy body check: a 200 response containing Fails. or an
 // unexpected empty page must not be accepted as a successful login/add.
 fn command_reply(response: reqwest::blocking::Response) -> Result<String, String> {
@@ -266,7 +294,7 @@ pub fn worker(ctx: eframe::egui::Context) -> (Sender<Command>, Receiver<(u64, Ev
                 Ok(Command::Connect(settings, password, session)) => {
                     epoch.set(session);
                     api = None;
-                    match Api::connect(settings, password) {
+                    match Api::connect(*settings, password) {
                         Ok((connected, version)) => {
                             api = Some(connected);
                             emit(Event::Connected(version));
@@ -355,6 +383,102 @@ pub fn worker(ctx: eframe::egui::Context) -> (Sender<Command>, Receiver<(u64, Ev
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn multipart_add_accepts_structured_legacy_and_pending_replies() {
+        let file = std::env::temp_dir().join(format!(
+            "qbit-add-test-{}-{}.torrent",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&file, b"d4:infod4:name4:testee").unwrap();
+        for (status, body, accepted) in [
+            (
+                "200 OK",
+                r#"{"success_count":1,"pending_count":0,"failure_count":0,"added_torrent_ids":["abc"]}"#,
+                true,
+            ),
+            (
+                "202 Accepted",
+                r#"{"success_count":0,"pending_count":1,"failure_count":0,"added_torrent_ids":[]}"#,
+                true,
+            ),
+            ("200 OK", "Ok.", true),
+            ("204 No Content", "", true),
+            ("200 OK", "Fails.", false),
+            ("409 Conflict", "", false),
+            ("200 OK", "", false),
+            (
+                "200 OK",
+                r#"{"success_count":0,"pending_count":0,"failure_count":1}"#,
+                false,
+            ),
+        ] {
+            let (address, server) = mock_server(vec![
+                ("200 OK", "Ok."),
+                ("200 OK", "v5.2.3"),
+                (status, body),
+            ]);
+            let (api, _) = Api::connect(
+                Settings {
+                    address,
+                    ..Default::default()
+                },
+                "test".into(),
+            )
+            .unwrap();
+            let result = api.execute(Command::File(file.clone(), "/downloads".into()));
+            let requests = server.join().unwrap();
+            assert_eq!(result.is_ok(), accepted, "{status}: {body}: {result:?}");
+            assert!(requests[2].starts_with("POST /api/v2/torrents/add "));
+            assert!(requests[2].contains("name=\"torrents\""));
+            assert!(requests[2].contains("d4:infod4:name4:testee"));
+            assert!(requests[2].contains("/downloads"));
+        }
+        std::fs::remove_file(file).unwrap();
+    }
+
+    #[test]
+    fn add_reports_partial_results_and_rejects_unknown_payloads() {
+        let message =
+            add_reply(r#"{"success_count":2,"pending_count":1,"failure_count":3}"#).unwrap();
+        assert!(message.contains("Добавлено: 2"));
+        assert!(message.contains("сервером: 1"));
+        assert!(message.contains("Не добавлено: 3"));
+        for body in [
+            "{}",
+            "[]",
+            "<html>Login</html>",
+            r#"{"success_count":-1,"pending_count":0,"failure_count":0}"#,
+        ] {
+            assert!(add_reply(body).is_err());
+        }
+        let (address, server) = mock_server(vec![
+            ("200 OK", "Ok."),
+            ("200 OK", "v5.2.3"),
+            (
+                "200 OK",
+                r#"{"success_count":1,"pending_count":0,"failure_count":0}"#,
+            ),
+        ]);
+        let (api, _) = Api::connect(
+            Settings {
+                address,
+                ..Default::default()
+            },
+            "test".into(),
+        )
+        .unwrap();
+        assert!(api
+            .execute(Command::Add(
+                "magnet:?xt=urn:btih:abc".into(),
+                String::new()
+            ))
+            .is_ok());
+        server.join().unwrap();
+    }
     #[test]
     fn remote_requests_encode_limits_and_preserve_session() {
         let (address, server) = mock_server(vec![

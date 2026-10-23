@@ -1,6 +1,6 @@
 [package]
 name = "qbit-remote"
-version = "0.1.0"
+version = "0.2.1"
 edition = "2021"
 description = "Windows desktop client for remote qBittorrent servers"
 
@@ -21,7 +21,7 @@ image = { version = "0.25", default-features = false, features = ["png"], option
 [target.'cfg(windows)'.dependencies]
 tray-icon = "0.20"
 raw-window-handle = "0.6"
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading"] }
 
 [dev-dependencies]
 ron = "0.8"

@@ -8,12 +8,29 @@ mod credentials;
 mod icon;
 mod model;
 mod remote;
+#[cfg(windows)]
+mod single_instance;
 #[cfg(feature = "ui-smoke")]
 mod smoke;
 #[cfg(windows)]
 mod tray;
 
 fn main() -> eframe::Result {
+    #[cfg(windows)]
+    let _instance = match single_instance::InstanceGuard::acquire() {
+        Ok(Some(guard)) => guard,
+        Ok(None) => return Ok(()),
+        Err(error) => {
+            rfd::MessageDialog::new()
+                .set_title("qBit Remote")
+                .set_description(format!(
+                    "Не удалось проверить запущенный экземпляр приложения: {error}"
+                ))
+                .set_level(rfd::MessageLevel::Error)
+                .show();
+            return Ok(());
+        }
+    };
     eframe::run_native(
         "qBit Remote",
         eframe::NativeOptions {

@@ -944,7 +944,11 @@ impl eframe::App for ClientApp {
                             }
                         }
                         ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
-                            ui.label(RichText::new("WINDOWS · 0.1.0").size(10.0).color(MUTED));
+                            ui.label(
+                                RichText::new(concat!("WINDOWS · ", env!("CARGO_PKG_VERSION")))
+                                    .size(10.0)
+                                    .color(MUTED),
+                            );
                             ui.add_space(8.0);
                         });
                     });

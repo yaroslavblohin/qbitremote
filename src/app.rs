@@ -6,14 +6,6 @@ use eframe::egui::{self, Color32, RichText};
 use egui_extras::{Column, TableBuilder};
 use std::sync::mpsc::{Receiver, Sender};
 
-const MUTED: Color32 = Color32::from_rgb(146, 163, 184);
-const ACCENT: Color32 = Color32::from_rgb(64, 199, 191);
-const BLUE: Color32 = Color32::from_rgb(84, 169, 255);
-const GREEN: Color32 = Color32::from_rgb(87, 211, 150);
-const ORANGE: Color32 = Color32::from_rgb(255, 181, 93);
-const RED: Color32 = Color32::from_rgb(249, 113, 132);
-const SURFACE: Color32 = Color32::from_rgb(24, 33, 46);
-
 pub struct ClientApp {
     about_open: bool,
     dragged_column: Option<String>,
@@ -58,6 +50,11 @@ impl ClientApp {
                 .map(|c| c.key.to_owned())
                 .collect();
         }
+        self.settings.theme = match std::env::var("QBIT_SMOKE_THEME").as_deref() {
+            Ok("white") => crate::theme::Theme::White,
+            Ok("marine") => crate::theme::Theme::Marine,
+            _ => crate::theme::Theme::Graphite,
+        };
         self.remote.smoke_fixture();
         self.settings.close_to_tray = false;
         self.settings.zoom = std::env::var("QBIT_SMOKE_ZOOM")
@@ -107,25 +104,7 @@ impl ClientApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let ctx = &cc.egui_ctx;
         ctx.set_theme(egui::Theme::Dark);
-        let mut visuals = egui::Visuals::dark();
-        visuals.panel_fill = SURFACE;
-        visuals.window_fill = Color32::from_rgb(30, 41, 57);
-        visuals.extreme_bg_color = Color32::from_rgb(16, 24, 35);
-        visuals.faint_bg_color = Color32::from_rgb(28, 39, 54);
-        visuals.override_text_color = Some(Color32::from_rgb(226, 228, 231));
-        visuals.widgets.inactive.bg_fill = Color32::from_rgb(36, 49, 66);
-        visuals.widgets.hovered.bg_fill = Color32::from_rgb(44, 65, 84);
-        visuals.widgets.active.bg_fill = Color32::from_rgb(37, 84, 96);
-        visuals.widgets.noninteractive.bg_stroke =
-            egui::Stroke::new(1.0_f32, Color32::from_rgb(44, 59, 77));
-        visuals.widgets.inactive.bg_stroke = egui::Stroke::NONE;
-        visuals.hyperlink_color = BLUE;
-        visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(6);
-        visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(6);
-        visuals.widgets.active.corner_radius = egui::CornerRadius::same(6);
-        visuals.selection.bg_fill = Color32::from_rgb(32, 68, 83);
-        visuals.selection.stroke = egui::Stroke::new(1.0_f32, Color32::from_rgb(230, 242, 249));
-        ctx.set_visuals(visuals);
+
         ctx.style_mut(|s| {
             s.spacing.item_spacing = egui::vec2(8.0, 4.0);
             s.spacing.button_padding = egui::vec2(10.0, 3.0);
@@ -155,6 +134,7 @@ impl ClientApp {
         if !settings.servers.is_empty() {
             settings.select_server(settings.selected_server.min(settings.servers.len() - 1));
         }
+        settings.theme.apply(ctx);
         settings.zoom = settings.zoom.clamp(0.8, 1.5);
         ctx.set_zoom_factor(settings.zoom);
         let (tx, rx) = api::worker(ctx.clone());
@@ -352,6 +332,7 @@ impl ClientApp {
         }
     }
     fn dialogs(&mut self, ctx: &egui::Context) {
+        let palette = crate::theme::palette(ctx);
         egui::Window::new("О программе")
             .open(&mut self.about_open)
             .collapsible(false)
@@ -413,7 +394,7 @@ impl ClientApp {
                     }
                 });
                 ui.label("Удалённый сервер qBittorrent");
-                ui.label(RichText::new("Включите Web UI в настройках сервера.").color(MUTED));
+                ui.label(RichText::new("Включите Web UI в настройках сервера.").color(palette.muted));
                 ui.small("Адрес, логин и пароль можно изменить здесь. Их изменение отключает текущий сервер.");
                 ui.add_enabled_ui(!self.connecting, |ui| {
                     ui.label("Название сервера");
@@ -518,7 +499,7 @@ impl ClientApp {
                     ctx.set_zoom_factor(self.settings.zoom);
                 }
                 ui.label(
-                    RichText::new("Выход — через меню «Файл» или значок в трее.").color(MUTED),
+                    RichText::new("Выход — через меню «Файл» или значок в трее.").color(palette.muted),
                 );
             });
         self.settings_open = open && self.settings_open;
@@ -576,10 +557,7 @@ impl ClientApp {
                     ui.label(name);
                     ui.checkbox(&mut self.delete_files, "Также удалить файлы на сервере");
                     if self.delete_files {
-                        ui.colored_label(
-                            Color32::LIGHT_RED,
-                            "Файлы будут удалены с удалённого сервера.",
-                        );
+                        ui.colored_label(palette.red, "Файлы будут удалены с удалённого сервера.");
                     }
                     ui.horizontal(|ui| {
                         if ui.button("Отмена").clicked() {
@@ -713,6 +691,17 @@ impl ClientApp {
                     }
                 });
                 ui.menu_button("Вид", |ui| {
+                    ui.menu_button("Тема оформления", |ui| {
+                        for theme in crate::theme::Theme::ALL {
+                            if ui
+                                .selectable_value(&mut self.settings.theme, theme, theme.name())
+                                .changed()
+                            {
+                                ctx.request_repaint();
+                                ui.close_menu();
+                            }
+                        }
+                    });
                     self.column_picker(ui);
                     ui.menu_button("Масштаб интерфейса", |ui| {
                         if ui
@@ -812,6 +801,10 @@ impl eframe::App for ClientApp {
         eframe::set_value(storage, "settings", &self.settings);
     }
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if crate::theme::current(ctx) != self.settings.theme {
+            self.settings.theme.apply(ctx);
+        }
+        let palette = self.settings.theme.palette();
         #[cfg(feature = "ui-smoke")]
         ctx.set_zoom_factor(self.settings.zoom);
         self.receive();
@@ -840,7 +833,11 @@ impl eframe::App for ClientApp {
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.colored_label(
-                    if self.connected { ACCENT } else { MUTED },
+                    if self.connected {
+                        palette.accent
+                    } else {
+                        palette.muted
+                    },
                     if self.connected {
                         "● Подключено"
                     } else if self.connecting {
@@ -866,11 +863,7 @@ impl eframe::App for ClientApp {
         egui::SidePanel::left("sidebar")
             .exact_width(218.0)
             .resizable(false)
-            .frame(
-                egui::Frame::new()
-                    .fill(Color32::from_rgb(18, 27, 39))
-                    .inner_margin(14.0),
-            )
+            .frame(egui::Frame::new().fill(palette.sidebar).inner_margin(14.0))
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical()
                     .id_salt("navigation")
@@ -879,21 +872,21 @@ impl eframe::App for ClientApp {
                         ui.horizontal(|ui| {
                             let (r, _) = ui
                                 .allocate_exact_size(egui::vec2(30.0, 30.0), egui::Sense::hover());
-                            ui.painter().rect_filled(r, 9.0, ACCENT);
-                            draw_icon(ui.painter(), r.center(), 1, Color32::from_rgb(13, 43, 48));
+                            ui.painter().rect_filled(r, 9.0, palette.accent);
+                            draw_icon(ui.painter(), r.center(), 1, palette.logo);
                             ui.label(RichText::new("qBit Remote").size(20.0).strong());
                         });
                         ui.add_space(12.0);
-                        ui.label(RichText::new("Сервер").size(12.0).color(MUTED));
+                        ui.label(RichText::new("Сервер").size(12.0).color(palette.muted));
                         ui.add(
                             egui::Label::new(
-                                RichText::new(&self.settings.server_name).color(ACCENT),
+                                RichText::new(&self.settings.server_name).color(palette.accent),
                             )
                             .truncate(),
                         )
                         .on_hover_text("Переключение и управление — в меню «Серверы»");
                         ui.add_space(24.0);
-                        ui.label(RichText::new("Торренты").size(12.0).color(MUTED));
+                        ui.label(RichText::new("Торренты").size(12.0).color(palette.muted));
                         for (index, label) in [
                             "Все торренты",
                             "Загрузка",
@@ -924,7 +917,7 @@ impl eframe::App for ClientApp {
                             }
                         }
                         ui.separator();
-                        ui.label(RichText::new("ИНСТРУМЕНТЫ").size(10.0).color(MUTED));
+                        ui.label(RichText::new("ИНСТРУМЕНТЫ").size(10.0).color(palette.muted));
                         for (index, (page, title)) in
                             crate::remote::PAGES.into_iter().skip(1).enumerate()
                         {
@@ -947,7 +940,7 @@ impl eframe::App for ClientApp {
                             ui.label(
                                 RichText::new(concat!("WINDOWS · ", env!("CARGO_PKG_VERSION")))
                                     .size(10.0)
-                                    .color(MUTED),
+                                    .color(palette.muted),
                             );
                             ui.add_space(8.0);
                         });
@@ -966,15 +959,15 @@ impl eframe::App for ClientApp {
             }
         }
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(SURFACE).inner_margin(16.0))
+            .frame(egui::Frame::new().fill(palette.surface).inner_margin(16.0))
             .show(ctx, |ui| {
                 if !self.remote.message.is_empty() {
                     ui.horizontal_wrapped(|ui| {
                         ui.colored_label(
                             if self.remote.error {
-                                Color32::LIGHT_RED
+                                palette.red
                             } else {
-                                MUTED
+                                palette.muted
                             },
                             &self.remote.message,
                         );
@@ -997,12 +990,12 @@ impl eframe::App for ClientApp {
                             "Ошибки",
                         ][self.filter],
                     );
-                    ui.label(RichText::new(self.torrents.len().to_string()).color(MUTED));
+                    ui.label(RichText::new(self.torrents.len().to_string()).color(palette.muted));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
                             .add_enabled(
                                 self.connected,
-                                action_button("+  Добавить торрент", ACCENT),
+                                action_button("+  Добавить торрент", palette.accent),
                             )
                             .clicked()
                         {
@@ -1019,13 +1012,19 @@ impl eframe::App for ClientApp {
                     );
                     let selected = self.selected.clone();
                     ui.add_enabled_ui(self.connected && selected.is_some(), |ui| {
-                        if ui.add(action_button("▶  Запустить", GREEN)).clicked() {
+                        if ui
+                            .add(action_button("▶  Запустить", palette.green))
+                            .clicked()
+                        {
                             self.send(Command::Start(selected.clone().unwrap()));
                         }
-                        if ui.add(action_button("II  Остановить", ORANGE)).clicked() {
+                        if ui
+                            .add(action_button("II  Остановить", palette.orange))
+                            .clicked()
+                        {
                             self.send(Command::Stop(selected.clone().unwrap()));
                         }
-                        if ui.add(action_button("×  Удалить", RED)).clicked() {
+                        if ui.add(action_button("×  Удалить", palette.red)).clicked() {
                             if let Some(t) = self
                                 .torrents
                                 .iter()
@@ -1045,7 +1044,7 @@ impl eframe::App for ClientApp {
                     if self.connected {
                         ui.separator();
                         ui.colored_label(
-                            BLUE,
+                            palette.blue,
                             format!(
                                 "↓ {}/с",
                                 bytes(self.torrents.iter().map(|t| t.dlspeed).sum())
@@ -1053,7 +1052,7 @@ impl eframe::App for ClientApp {
                         )
                         .on_hover_text("Скорость загрузки");
                         ui.colored_label(
-                            ORANGE,
+                            palette.orange,
                             format!(
                                 "↑ {}/с",
                                 bytes(self.torrents.iter().map(|t| t.upspeed).sum())
@@ -1061,7 +1060,7 @@ impl eframe::App for ClientApp {
                         )
                         .on_hover_text("Скорость отдачи");
                         ui.colored_label(
-                            GREEN,
+                            palette.green,
                             format!(
                                 "Готово {}/{}",
                                 self.torrents.iter().filter(|t| t.progress >= 1.0).count(),
@@ -1075,9 +1074,9 @@ impl eframe::App for ClientApp {
                     ui.horizontal_wrapped(|ui| {
                         ui.colored_label(
                             if self.is_error {
-                                Color32::LIGHT_RED
+                                palette.red
                             } else {
-                                MUTED
+                                palette.muted
                             },
                             &self.notice,
                         );
@@ -1097,7 +1096,7 @@ impl eframe::App for ClientApp {
                             RichText::new(
                                 "Подключите сервер qBittorrent, чтобы управлять торрентами.",
                             )
-                            .color(MUTED),
+                            .color(palette.muted),
                         );
                         ui.add_space(16.0);
                         if ui.button("Настроить подключение").clicked() {
@@ -1202,7 +1201,7 @@ impl eframe::App for ClientApp {
                                                 ui.painter().vline(
                                                     x,
                                                     response.rect.y_range(),
-                                                    egui::Stroke::new(2.0_f32, ACCENT),
+                                                    egui::Stroke::new(2.0_f32, palette.accent),
                                                 );
                                                 if ui.input(|i| i.pointer.any_released()) {
                                                     column_drop = Some((
@@ -1241,9 +1240,9 @@ impl eframe::App for ClientApp {
                                                 torrent_progress(ui, t);
                                             } else {
                                                 let color = match c.key {
-                                                    "state" => torrent_color(t),
-                                                    "dlspeed" if t.dlspeed > 0 => BLUE,
-                                                    "upspeed" if t.upspeed > 0 => ORANGE,
+                                                    "state" => torrent_color(t, palette),
+                                                    "dlspeed" if t.dlspeed > 0 => palette.blue,
+                                                    "upspeed" if t.upspeed > 0 => palette.orange,
                                                     _ => ui.visuals().text_color(),
                                                 };
                                                 let text = c.display(t);
@@ -1286,18 +1285,18 @@ impl eframe::App for ClientApp {
 }
 
 fn column_header(ui: &mut egui::Ui, title: &str) -> egui::Response {
+    let palette = crate::theme::palette(ui.ctx());
     let (rect, response) =
         ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
     if response.hovered() || response.dragged() {
-        ui.painter()
-            .rect_filled(rect, 3.0, Color32::from_rgb(36, 52, 70));
+        ui.painter().rect_filled(rect, 3.0, palette.hover);
     }
     ui.painter().text(
         rect.left_center() + egui::vec2(4.0, 0.0),
         egui::Align2::LEFT_CENTER,
         title,
         egui::FontId::proportional(13.0),
-        MUTED,
+        palette.muted,
     );
     response
         .on_hover_cursor(egui::CursorIcon::Grab)
@@ -1346,8 +1345,19 @@ fn navigation_row(
     icon: usize,
     selected: bool,
 ) -> egui::Response {
+    let palette = crate::theme::palette(ui.ctx());
     let color = [
-        ACCENT, BLUE, ORANGE, MUTED, RED, BLUE, ACCENT, ORANGE, MUTED, BLUE, ACCENT,
+        palette.accent,
+        palette.blue,
+        palette.orange,
+        palette.muted,
+        palette.red,
+        palette.blue,
+        palette.accent,
+        palette.orange,
+        palette.muted,
+        palette.blue,
+        palette.accent,
     ][icon.min(10)];
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), 18.0), egui::Sense::click());
@@ -1356,9 +1366,9 @@ fn navigation_row(
             rect,
             5.0,
             if selected {
-                Color32::from_rgb(32, 61, 76)
+                palette.selection
             } else {
-                Color32::from_rgb(29, 43, 59)
+                palette.hover
             },
         );
     }
@@ -1380,15 +1390,14 @@ fn navigation_row(
         egui::Align2::LEFT_CENTER,
         label,
         egui::FontId::proportional(13.0),
-        Color32::from_rgb(226, 228, 231),
+        palette.text,
     );
     if count != usize::MAX {
         let badge = egui::Rect::from_center_size(
             rect.right_center() - egui::vec2(19.0, 0.0),
             egui::vec2(30.0, 16.0),
         );
-        ui.painter()
-            .rect_filled(badge, 11.0, Color32::from_rgb(40, 54, 71));
+        ui.painter().rect_filled(badge, 11.0, palette.badge);
         ui.painter().text(
             badge.center(),
             egui::Align2::CENTER_CENTER,
@@ -1407,21 +1416,21 @@ fn action_button(label: &str, color: Color32) -> egui::Button<'_> {
         .min_size(egui::vec2(0.0, 24.0))
 }
 
-fn torrent_color(t: &Torrent) -> Color32 {
+fn torrent_color(t: &Torrent, palette: crate::theme::Palette) -> Color32 {
     if matches!(t.state.as_str(), "error" | "missingFiles") {
-        RED
+        palette.red
     } else if t.stopped() {
-        MUTED
+        palette.muted
     } else if t.state.contains("checking") {
-        Color32::from_rgb(182, 153, 255)
+        palette.purple
     } else if t.progress >= 1.0 {
         if t.upspeed > 0 {
-            ORANGE
+            palette.orange
         } else {
-            GREEN
+            palette.green
         }
     } else {
-        BLUE
+        palette.blue
     }
 }
 
@@ -1501,7 +1510,13 @@ fn draw_icon(p: &egui::Painter, center: egui::Pos2, kind: usize, color: Color32)
 
 fn torrent_progress(ui: &mut egui::Ui, torrent: &Torrent) {
     let value = torrent.progress.clamp(0.0, 1.0);
-    let color = torrent_color(torrent);
+    let color = torrent_color(torrent, crate::theme::palette(ui.ctx()));
+    let fill_strength =
+        if crate::theme::current(ui.ctx()) == crate::theme::Theme::Graphite && !torrent.stopped() {
+            0.62
+        } else {
+            0.42
+        };
     let (rect, _) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), 16.0), egui::Sense::hover());
     ui.painter()
@@ -1510,7 +1525,7 @@ fn torrent_progress(ui: &mut egui::Ui, torrent: &Torrent) {
         ui.painter().rect_filled(
             egui::Rect::from_min_size(rect.min, egui::vec2(rect.width() * value, rect.height())),
             5.0,
-            color.gamma_multiply(0.42),
+            color.gamma_multiply(fill_strength),
         );
     }
     ui.painter().text(

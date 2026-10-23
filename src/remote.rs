@@ -2,7 +2,7 @@ use crate::{
     api::Command,
     model::{bytes, Torrent},
 };
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, RichText};
 use egui_extras::{Column, TableBuilder};
 use serde_json::{json, Value};
 use std::{
@@ -290,7 +290,7 @@ impl Remote {
             data: Err(error), ..
         }) = self.cache.get(key)
         {
-            ui.colored_label(Color32::LIGHT_RED, error);
+            ui.colored_label(crate::theme::palette(ui.ctx()).red, error);
         } else {
             ui.spinner();
             ui.label("Загрузка с сервера…");
@@ -467,9 +467,9 @@ impl Remote {
                     let index = i * pieces.len() / bins;
                     let state = pieces.get(index).and_then(Value::as_i64).unwrap_or(0);
                     let color = match state {
-                        2 => Color32::from_rgb(160, 178, 198),
-                        1 => Color32::from_rgb(65, 115, 180),
-                        _ => Color32::from_gray(45),
+                        2 => crate::theme::palette(ui.ctx()).muted,
+                        1 => crate::theme::palette(ui.ctx()).blue,
+                        _ => crate::theme::palette(ui.ctx()).button,
                     };
                     ui.painter().rect_filled(
                         egui::Rect::from_min_max(
@@ -1019,7 +1019,7 @@ fn file_tree_table(
                                     .add(
                                         egui::Label::new(
                                             RichText::new(label)
-                                                .color(Color32::from_rgb(255, 181, 93)),
+                                                .color(crate::theme::palette(ui.ctx()).orange),
                                         )
                                         .truncate()
                                         .selectable(false)
@@ -1105,10 +1105,11 @@ fn speed_graph(ui: &mut egui::Ui, history: &VecDeque<(f32, f32)>) {
         .iter()
         .flat_map(|(a, b)| [*a, *b])
         .fold(1.0_f32, f32::max);
-    ui.painter().rect_filled(rect, 4.0, Color32::from_gray(20));
+    ui.painter()
+        .rect_filled(rect, 4.0, crate::theme::palette(ui.ctx()).input);
     for (idx, color) in [
-        (0, Color32::from_rgb(145, 175, 205)),
-        (1, Color32::from_rgb(160, 180, 150)),
+        (0, crate::theme::palette(ui.ctx()).blue),
+        (1, crate::theme::palette(ui.ctx()).green),
     ] {
         let points: Vec<_> = history
             .iter()

@@ -12,6 +12,7 @@ mod remote;
 mod single_instance;
 #[cfg(feature = "ui-smoke")]
 mod smoke;
+mod theme;
 #[cfg(windows)]
 mod tray;
 

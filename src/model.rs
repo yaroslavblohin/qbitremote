@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    pub theme: crate::theme::Theme,
     pub visible_columns: Vec<String>,
     pub column_widths: std::collections::BTreeMap<String, f32>,
     pub sort_column: String,
@@ -69,6 +70,7 @@ pub struct SavedPassword {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            theme: Default::default(),
             visible_columns: crate::columns::defaults(),
             column_widths: Default::default(),
             sort_column: "name".into(),

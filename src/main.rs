@@ -5,6 +5,7 @@ mod app;
 mod columns;
 #[cfg(windows)]
 mod credentials;
+mod icon;
 mod model;
 mod remote;
 #[cfg(feature = "ui-smoke")]
@@ -19,6 +20,7 @@ fn main() -> eframe::Result {
             #[cfg(feature = "ui-smoke")]
             persistence_path: Some(std::path::PathBuf::from("dist/ui-smoke-state.ron")),
             viewport: eframe::egui::ViewportBuilder::default()
+                .with_icon(icon::window())
                 .with_inner_size([1200.0, 780.0])
                 .with_min_inner_size([860.0, 580.0]),
             ..Default::default()

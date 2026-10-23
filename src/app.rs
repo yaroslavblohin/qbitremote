@@ -414,7 +414,8 @@ impl ClientApp {
                 });
                 ui.label("Удалённый сервер qBittorrent");
                 ui.label(RichText::new("Включите Web UI в настройках сервера.").color(MUTED));
-                ui.add_enabled_ui(!self.connecting && !self.connected, |ui| {
+                ui.small("Адрес, логин и пароль можно изменить здесь. Их изменение отключает текущий сервер.");
+                ui.add_enabled_ui(!self.connecting, |ui| {
                     ui.label("Название сервера");
                     ui.text_edit_singleline(&mut self.settings.server_name);
                     ui.label("Адрес Web UI");
@@ -434,7 +435,15 @@ impl ClientApp {
                         self.settings.saved_password = None;
                     }
                     ui.label("Пароль");
-                    ui.add(egui::TextEdit::singleline(&mut self.password).password(true));
+                    let password_changed = ui.add(egui::TextEdit::singleline(&mut self.password).password(true)).changed();
+                    if address_changed || username_changed || password_changed {
+                        self.settings.saved_password = None;
+                        if self.connected {
+                            self.disconnect();
+                            self.notice = "Параметры подключения изменены. Подключитесь с новыми данными.".into();
+                            self.is_error = false;
+                        }
+                    }
                 });
                 if ui
                     .add_enabled(

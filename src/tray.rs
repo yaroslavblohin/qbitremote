@@ -89,19 +89,7 @@ impl Tray {
         let exit = MenuItem::new("Выход", true, None);
         menu.append_items(&[&show, &exit])
             .map_err(|e| e.to_string())?;
-        let mut rgba = Vec::with_capacity(32 * 32 * 4);
-        for y in 0..32 {
-            for x in 0_i32..32 {
-                let arrow = (14..18).contains(&x) && (7..22).contains(&y)
-                    || (17..24).contains(&y) && (x - 16).abs() <= 24 - y;
-                rgba.extend_from_slice(if arrow {
-                    &[235, 240, 245, 255]
-                } else {
-                    &[42, 51, 61, 255]
-                });
-            }
-        }
-        let icon = Icon::from_rgba(rgba, 32, 32).map_err(|e| e.to_string())?;
+        let icon = Icon::from_rgba(crate::icon::rgba(32), 32, 32).map_err(|e| e.to_string())?;
         let tray = TrayIconBuilder::new()
             .with_tooltip("qBit Remote")
             .with_icon(icon)

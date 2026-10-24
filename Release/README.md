@@ -1,4 +1,4 @@
-# qBit Remote 0.2.12
+# qBit Remote 0.2.13
 
 Клиент для управления удалённым qBittorrent через Web UI API. Только Windows. Установка не требуется: запустите `qbit-remote.exe` из этой папки.
 

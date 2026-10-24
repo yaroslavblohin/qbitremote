@@ -1251,9 +1251,22 @@ impl eframe::App for ClientApp {
                                             }
                                         });
                                     }
-                                    if row.response().clicked() {
+                                    let response = row.response();
+                                    #[cfg(feature = "ui-smoke")]
+                                    if t.hash == "fixture-1" {
+                                        ctx.data_mut(|data| {
+                                            data.insert_temp(
+                                                egui::Id::new("smoke-torrent-row"),
+                                                response.rect.center(),
+                                            )
+                                        });
+                                    }
+                                    if response.clicked() || response.secondary_clicked() {
                                         self.selected = Some(t.hash.clone());
                                     }
+                                    response.context_menu(|ui| {
+                                        self.remote.torrent_actions(ui, t);
+                                    });
                                 });
                             });
                     });
@@ -1434,7 +1447,7 @@ fn torrent_color(t: &Torrent, palette: crate::theme::Palette) -> Color32 {
     }
 }
 
-fn draw_icon(p: &egui::Painter, center: egui::Pos2, kind: usize, color: Color32) {
+pub(crate) fn draw_icon(p: &egui::Painter, center: egui::Pos2, kind: usize, color: Color32) {
     let point = |x, y| center + egui::vec2(x, y);
     let stroke = egui::Stroke::new(1.8_f32, color);
     let line = |a: (f32, f32), b: (f32, f32)| {
@@ -1609,53 +1622,62 @@ mod tests {
 
     #[test]
     fn clicking_torrent_text_selects_the_row() {
-        let ctx = egui::Context::default();
-        let mut target = egui::Pos2::ZERO;
-        let mut clicked = false;
-        for frame in 0..3 {
-            let mut input = egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(
-                    egui::Pos2::ZERO,
-                    egui::vec2(800.0, 600.0),
-                )),
-                ..Default::default()
-            };
-            if frame > 0 {
-                input.events = vec![
-                    egui::Event::PointerMoved(target),
-                    egui::Event::PointerButton {
-                        pos: target,
-                        button: egui::PointerButton::Primary,
-                        pressed: frame == 1,
-                        modifiers: egui::Modifiers::NONE,
-                    },
-                ];
-            }
-            let _ = ctx.run(input, |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| {
-                    TableBuilder::new(ui)
-                        .sense(egui::Sense::click())
-                        .column(Column::initial(400.0))
-                        .body(|body| {
-                            body.rows(18.0, 1, |mut row| {
-                                row.col(|ui| {
-                                    let response = torrent_cell_text(
-                                        ui,
-                                        "Clickable torrent name",
-                                        Color32::WHITE,
-                                    );
-                                    if frame == 0 {
-                                        target =
-                                            response.rect.left_center() + egui::vec2(20.0, 0.0);
-                                    }
-                                });
-                                clicked |= row.response().clicked();
-                            })
-                        });
+        for button in [egui::PointerButton::Primary, egui::PointerButton::Secondary] {
+            let ctx = egui::Context::default();
+            let mut menu_opened = false;
+            let mut target = egui::Pos2::ZERO;
+            let mut clicked = false;
+            for frame in 0..3 {
+                let mut input = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(800.0, 600.0),
+                    )),
+                    ..Default::default()
+                };
+                if frame > 0 {
+                    input.events = vec![
+                        egui::Event::PointerMoved(target),
+                        egui::Event::PointerButton {
+                            pos: target,
+                            button,
+                            pressed: frame == 1,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ];
+                }
+                let _ = ctx.run(input, |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        TableBuilder::new(ui)
+                            .sense(egui::Sense::click())
+                            .column(Column::initial(400.0))
+                            .body(|body| {
+                                body.rows(18.0, 1, |mut row| {
+                                    row.col(|ui| {
+                                        let response = torrent_cell_text(
+                                            ui,
+                                            "Clickable torrent name",
+                                            Color32::WHITE,
+                                        );
+                                        if frame == 0 {
+                                            target =
+                                                response.rect.left_center() + egui::vec2(20.0, 0.0);
+                                        }
+                                    });
+                                    let response = row.response();
+                                    clicked |= response.clicked() || response.secondary_clicked();
+                                    response.context_menu(|ui| {
+                                        menu_opened = true;
+                                        ui.label("Torrent actions");
+                                    });
+                                })
+                            });
+                    });
                 });
-            });
+            }
+            assert!(clicked, "Clicking the text must reach the torrent row");
+            assert_eq!(menu_opened, button == egui::PointerButton::Secondary);
         }
-        assert!(clicked, "Clicking the text must reach the torrent row");
     }
 
     #[test]

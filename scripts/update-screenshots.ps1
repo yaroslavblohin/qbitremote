@@ -30,6 +30,12 @@ try {
     & ./target/debug/qbit-remote.exe
     if ($LASTEXITCODE -ne 0) { throw 'Screenshot failed: white' }
     Copy-Item -LiteralPath dist/ui-smoke.png -Destination docs/screenshots/white.png
+    $env:QBIT_SMOKE_THEME = 'graphite'
+    $env:QBIT_SMOKE_PAGE = 'actions'
+    Remove-Item -LiteralPath dist/ui-smoke.png -ErrorAction SilentlyContinue
+    & ./target/debug/qbit-remote.exe
+    if ($LASTEXITCODE -ne 0) { throw 'Screenshot failed: actions' }
+    Copy-Item -LiteralPath dist/ui-smoke.png -Destination docs/screenshots/actions.png
 } finally {
     $env:QBIT_SMOKE_PAGE = $previousPage
     $env:QBIT_SMOKE_ZOOM = $previousZoom

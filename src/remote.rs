@@ -12,6 +12,66 @@ use std::{
 mod file_tree;
 mod pages;
 
+fn menu_group(ui: &mut egui::Ui, title: &str) {
+    let p = crate::theme::palette(ui.ctx());
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 17.0), egui::Sense::hover());
+    ui.painter().line_segment(
+        [rect.left_top(), rect.right_top()],
+        egui::Stroke::new(1.0_f32, p.border),
+    );
+    ui.painter().text(
+        rect.left_center() + egui::vec2(3.0, 2.0),
+        egui::Align2::LEFT_CENTER,
+        title,
+        egui::FontId::proportional(10.0),
+        p.muted,
+    );
+}
+
+fn action_menu_item(ui: &mut egui::Ui, label: &str, icon: usize, checked: bool) -> egui::Response {
+    let p = crate::theme::palette(ui.ctx());
+    let font = egui::FontId::proportional(12.0);
+    let width = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), font.clone(), p.text)
+        .size()
+        .x;
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width().max(width + 48.0).max(270.0), 19.0),
+        egui::Sense::click(),
+    );
+    if response.hovered() || response.has_focus() {
+        ui.painter().rect_filled(rect, 4.0, p.hover);
+    }
+    crate::app::draw_icon(
+        ui.painter(),
+        rect.left_center() + egui::vec2(11.0, 0.0),
+        icon,
+        p.accent,
+    );
+    ui.painter().text(
+        rect.left_center() + egui::vec2(26.0, 0.0),
+        egui::Align2::LEFT_CENTER,
+        label,
+        font.clone(),
+        p.text,
+    );
+    if checked {
+        ui.painter().text(
+            rect.right_center() - egui::vec2(14.0, 0.0),
+            egui::Align2::CENTER_CENTER,
+            "✓",
+            font,
+            p.green,
+        );
+    }
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label)
+    });
+    response
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum Page {
     #[default]
@@ -405,7 +465,6 @@ impl Remote {
             {
                 ui.selectable_value(&mut self.tab, i, *name);
             }
-            self.torrent_actions(ui, torrent);
         });
         ui.separator();
         let endpoint = match self.tab {
@@ -536,164 +595,186 @@ impl Remote {
             );
         }
     }
-    fn torrent_actions(&mut self, ui: &mut egui::Ui, t: &Torrent) {
-        ui.menu_button("Действия", |ui| {
-            for (label, method) in [
-                ("Перепроверить", "recheck"),
-                ("Обновить трекеры", "reannounce"),
-                ("Выше в очереди", "increasePrio"),
-                ("Ниже в очереди", "decreasePrio"),
-                ("В начало очереди", "topPrio"),
-                ("В конец очереди", "bottomPrio"),
-                (
-                    "Последовательная загрузка: переключить",
-                    "toggleSequentialDownload",
-                ),
-                (
-                    "Первые/последние части: переключить",
-                    "toggleFirstLastPiecePrio",
-                ),
-            ] {
-                if ui.button(label).clicked() {
-                    self.action(
-                        label,
-                        &format!("torrents/{method}"),
-                        vec![("hashes".into(), t.hash.clone())],
-                    );
-                    ui.close_menu();
+    pub fn torrent_actions(&mut self, ui: &mut egui::Ui, t: &Torrent) {
+        ui.set_width(290.0);
+        ui.spacing_mut().item_spacing.y = 1.0;
+        egui::ScrollArea::vertical()
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
+            .max_height((ui.ctx().screen_rect().height() - 80.0).max(180.0))
+            .show(ui, |ui| {
+                menu_group(ui, "Проверка и трекеры");
+                for (label, method) in [
+                    ("Перепроверить", "recheck"),
+                    ("Обновить трекеры", "reannounce"),
+                    ("Выше в очереди", "increasePrio"),
+                    ("Ниже в очереди", "decreasePrio"),
+                    ("В начало очереди", "topPrio"),
+                    ("В конец очереди", "bottomPrio"),
+                    ("Последовательная загрузка", "toggleSequentialDownload"),
+                    ("Приоритет крайних частей", "toggleFirstLastPiecePrio"),
+                ] {
+                    if method == "increasePrio" {
+                        menu_group(ui, "Очередь");
+                    }
+                    if method == "toggleSequentialDownload" {
+                        menu_group(ui, "Режим загрузки");
+                    }
+                    let icon = match method {
+                        "recheck" => 6,
+                        "reannounce" => 7,
+                        "increasePrio" | "topPrio" => 2,
+                        "decreasePrio" | "bottomPrio" => 1,
+                        _ => 8,
+                    };
+                    if action_menu_item(ui, label, icon, false).clicked() {
+                        self.action(
+                            label,
+                            &format!("torrents/{method}"),
+                            vec![("hashes".into(), t.hash.clone())],
+                        );
+                        ui.close_menu();
+                    }
                 }
-            }
-            for (label, method, key) in [
-                ("Принудительный запуск", "setForceStart", "force_start"),
-                ("Автоуправление", "setAutoManagement", "auto_tmm"),
-                ("Суперсидирование", "setSuperSeeding", "super_seeding"),
-            ] {
-                let enabled = t.extra.get(key).and_then(Value::as_bool).unwrap_or(false);
-                if ui
-                    .button(format!("{} {label}", if enabled { "✓" } else { "" }))
+                menu_group(ui, "Управление и раздача");
+                for (label, method, key) in [
+                    ("Принудительный запуск", "setForceStart", "force_start"),
+                    ("Автоуправление", "setAutoManagement", "auto_tmm"),
+                    ("Суперсидирование", "setSuperSeeding", "super_seeding"),
+                ] {
+                    let enabled = t.extra.get(key).and_then(Value::as_bool).unwrap_or(false);
+                    if action_menu_item(ui, label, 9, enabled).clicked() {
+                        self.action(
+                            label,
+                            &format!("torrents/{method}"),
+                            vec![
+                                ("hashes".into(), t.hash.clone()),
+                                ("enable".into(), (!enabled).to_string()),
+                                ("value".into(), (!enabled).to_string()),
+                            ],
+                        );
+                        ui.close_menu();
+                    }
+                }
+                menu_group(ui, "Данные и организация");
+                for (title, path, key, label, initial) in [
+                    (
+                        "Переименовать торрент",
+                        "rename",
+                        "name",
+                        "Имя",
+                        t.name.clone(),
+                    ),
+                    (
+                        "Изменить категорию",
+                        "setCategory",
+                        "category",
+                        "Категория (пусто — убрать)",
+                        t.category.clone(),
+                    ),
+                    (
+                        "Добавить теги",
+                        "addTags",
+                        "tags",
+                        "Теги через запятую",
+                        String::new(),
+                    ),
+                    (
+                        "Удалить теги",
+                        "removeTags",
+                        "tags",
+                        "Теги через запятую",
+                        String::new(),
+                    ),
+                    (
+                        "Изменить комментарий",
+                        "setComment",
+                        "comment",
+                        "Комментарий",
+                        String::new(),
+                    ),
+                    (
+                        "Переместить данные на сервере",
+                        "setLocation",
+                        "location",
+                        "Новый путь на сервере",
+                        t.save_path.clone(),
+                    ),
+                ] {
+                    if action_menu_item(
+                        ui,
+                        title,
+                        if path == "setLocation" { 2 } else { 10 },
+                        false,
+                    )
                     .clicked()
+                    {
+                        let hk = if path == "rename" { "hash" } else { "hashes" };
+                        self.open_form(
+                            title,
+                            &format!("torrents/{path}"),
+                            vec![(hk.into(), t.hash.clone())],
+                            vec![Field::new(key, label, initial)],
+                            "Изменение применяется на удалённом сервере.",
+                        );
+                        ui.close_menu();
+                    }
+                }
+                menu_group(ui, "Ограничения и экспорт");
+                if action_menu_item(ui, "Ограничения раздачи…", 9, false).clicked()
                 {
-                    self.action(
-                        label,
-                        &format!("torrents/{method}"),
+                    self.open_form(
+                        "Ограничения раздачи",
+                        "torrents/setShareLimits",
                         vec![
                             ("hashes".into(), t.hash.clone()),
-                            ("enable".into(), (!enabled).to_string()),
-                            ("value".into(), (!enabled).to_string()),
+                            ("shareLimitAction".into(), "Default".into()),
+                            ("shareLimitsMode".into(), "Default".into()),
                         ],
+                        vec![
+                            Field::new(
+                                "ratioLimit",
+                                "Рейтинг · -2 по умолчанию, -1 без ограничения",
+                                -2,
+                            ),
+                            Field::new(
+                                "seedingTimeLimit",
+                                "Время раздачи, минуты · -2 по умолчанию, -1 без ограничения",
+                                -2,
+                            ),
+                            Field::new(
+                                "inactiveSeedingTimeLimit",
+                                "Неактивная раздача, минуты · -2 по умолчанию, -1 без ограничения",
+                                -2,
+                            ),
+                        ],
+                        "",
                     );
                     ui.close_menu();
                 }
-            }
-            for (title, path, key, label, initial) in [
-                (
-                    "Переименовать торрент",
-                    "rename",
-                    "name",
-                    "Имя",
-                    t.name.clone(),
-                ),
-                (
-                    "Изменить категорию",
-                    "setCategory",
-                    "category",
-                    "Категория (пусто — убрать)",
-                    t.category.clone(),
-                ),
-                (
-                    "Добавить теги",
-                    "addTags",
-                    "tags",
-                    "Теги через запятую",
-                    String::new(),
-                ),
-                (
-                    "Удалить теги",
-                    "removeTags",
-                    "tags",
-                    "Теги через запятую",
-                    String::new(),
-                ),
-                (
-                    "Изменить комментарий",
-                    "setComment",
-                    "comment",
-                    "Комментарий",
-                    String::new(),
-                ),
-                (
-                    "Переместить данные на сервере",
-                    "setLocation",
-                    "location",
-                    "Новый путь на сервере",
-                    t.save_path.clone(),
-                ),
-            ] {
-                if ui.button(title).clicked() {
-                    let hk = if path == "rename" { "hash" } else { "hashes" };
-                    self.open_form(
-                        title,
-                        &format!("torrents/{path}"),
-                        vec![(hk.into(), t.hash.clone())],
-                        vec![Field::new(key, label, initial)],
-                        "Изменение применяется на удалённом сервере.",
-                    );
-                    ui.close_menu();
-                }
-            }
-            if ui.button("Ограничения раздачи…").clicked() {
-                self.open_form(
-                    "Ограничения раздачи",
-                    "torrents/setShareLimits",
-                    vec![
-                        ("hashes".into(), t.hash.clone()),
-                        ("shareLimitAction".into(), "Default".into()),
-                        ("shareLimitsMode".into(), "Default".into()),
-                    ],
-                    vec![
-                        Field::new(
-                            "ratioLimit",
-                            "Рейтинг · -2 по умолчанию, -1 без ограничения",
-                            -2,
-                        ),
-                        Field::new(
-                            "seedingTimeLimit",
-                            "Время раздачи, минуты · -2 по умолчанию, -1 без ограничения",
-                            -2,
-                        ),
-                        Field::new(
-                            "inactiveSeedingTimeLimit",
-                            "Неактивная раздача, минуты · -2 по умолчанию, -1 без ограничения",
-                            -2,
-                        ),
-                    ],
-                    "",
-                );
-                ui.close_menu();
-            }
-            if ui.button("Экспортировать .torrent…").clicked() {
-                if let Some(destination) = rfd::FileDialog::new()
-                    .add_filter("Torrent", &["torrent"])
-                    .set_file_name("export.torrent")
-                    .save_file()
+                if action_menu_item(ui, "Экспортировать .torrent…", 1, false).clicked()
                 {
-                    self.serial += 1;
-                    self.pending.insert(
-                        self.serial,
-                        Pending {
-                            key: "Экспорт торрента".into(),
-                            post: true,
-                        },
-                    );
-                    self.queue.push(Command::Export {
-                        token: self.serial,
-                        hash: t.hash.clone(),
-                        destination,
-                    });
+                    if let Some(destination) = rfd::FileDialog::new()
+                        .add_filter("Torrent", &["torrent"])
+                        .set_file_name("export.torrent")
+                        .save_file()
+                    {
+                        self.serial += 1;
+                        self.pending.insert(
+                            self.serial,
+                            Pending {
+                                key: "Экспорт торрента".into(),
+                                post: true,
+                            },
+                        );
+                        self.queue.push(Command::Export {
+                            token: self.serial,
+                            hash: t.hash.clone(),
+                            destination,
+                        });
+                    }
+                    ui.close_menu();
                 }
-                ui.close_menu();
-            }
-        });
+            });
     }
     fn trackers(&mut self, ui: &mut egui::Ui, hash: &str, data: &Value) {
         ui.horizontal(|ui| {
@@ -882,24 +963,8 @@ impl Remote {
         });
         let rows = file_tree::rows(data, &self.file_filter, &self.collapsed_folders);
         let searching = !self.file_filter.trim().is_empty();
-        let toggled = file_tree_table(ui, hash, &rows, searching, |ui, row| {
+        let (toggled, rename) = file_tree_table(ui, hash, &rows, searching, |ui, row| {
             if row["__folder"].as_bool() == Some(true) {
-                if ui.small_button("Имя…").clicked() {
-                    self.open_form(
-                        "Переименовать папку",
-                        "torrents/renameFolder",
-                        vec![
-                            ("hash".into(), hash.into()),
-                            ("oldPath".into(), text(row, "__path")),
-                        ],
-                        vec![Field::new(
-                            "newPath",
-                            "Новый относительный путь",
-                            text(row, "__path"),
-                        )],
-                        "Папка будет переименована на сервере.",
-                    );
-                }
                 return;
             }
             let mut priority = number(row, "priority");
@@ -944,16 +1009,16 @@ impl Remote {
                 self.collapsed_folders.insert(path);
             }
         }
-        if ui.button("Переименовать папку…").clicked() {
+        if let Some(path) = rename {
             self.open_form(
                 "Переименовать папку",
                 "torrents/renameFolder",
-                vec![("hash".into(), hash.into())],
                 vec![
-                    Field::new("oldPath", "Текущий относительный путь", ""),
-                    Field::new("newPath", "Новый относительный путь", ""),
+                    ("hash".into(), hash.into()),
+                    ("oldPath".into(), path.clone()),
                 ],
-                "Операция выполняется сервером.",
+                vec![Field::new("newPath", "Новый относительный путь", path)],
+                "Папка будет переименована на сервере.",
             );
         }
     }
@@ -965,15 +1030,16 @@ fn file_tree_table(
     rows: &[Value],
     searching: bool,
     mut action: impl FnMut(&mut egui::Ui, &Value),
-) -> Option<String> {
+) -> (Option<String>, Option<String>) {
     let mut toggled = None;
+    let mut rename = None;
     if rows.is_empty() {
         ui.label(if searching {
             "Файлы не найдены"
         } else {
             "Нет файлов · метаданные ещё не получены"
         });
-        return None;
+        return (None, None);
     }
     let width = ui.available_width().max(850.0);
     egui::ScrollArea::horizontal()
@@ -983,6 +1049,7 @@ fn file_tree_table(
             TableBuilder::new(ui)
                 .id_salt(("file-tree", hash))
                 .striped(true)
+                .sense(egui::Sense::click())
                 .resizable(true)
                 .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                 .column(Column::remainder().at_least(280.0).clip(true))
@@ -1010,8 +1077,22 @@ fn file_tree_table(
                                 } else {
                                     "▶"
                                 };
+                                if ui
+                                    .add(
+                                        egui::Label::new(
+                                            RichText::new(arrow)
+                                                .color(crate::theme::palette(ui.ctx()).orange),
+                                        )
+                                        .selectable(false)
+                                        .sense(egui::Sense::click()),
+                                    )
+                                    .clicked()
+                                    && !searching
+                                {
+                                    toggled = Some(text(file, "__path"));
+                                }
                                 let label = format!(
-                                    "{arrow}  {}  ({})",
+                                    "{}  ({})",
                                     text(file, "name"),
                                     number(file, "__count")
                                 );
@@ -1030,9 +1111,17 @@ fn file_tree_table(
                                     } else {
                                         text(file, "__path")
                                     });
-                                if response.clicked() && !searching {
-                                    toggled = Some(text(file, "__path"));
+                                if response.double_clicked() {
+                                    rename = Some(text(file, "__path"));
                                 }
+                                response.context_menu(|ui| {
+                                    if action_menu_item(ui, "Переименовать папку…", 10, false)
+                                        .clicked()
+                                    {
+                                        rename = Some(text(file, "__path"));
+                                        ui.close_menu();
+                                    }
+                                });
                             } else {
                                 ui.add_space(18.0);
                                 ui.add(egui::Label::new(text(file, "name")).truncate())
@@ -1051,10 +1140,19 @@ fn file_tree_table(
                         row.col(|ui| {
                             ui.horizontal(|ui| action(ui, file));
                         });
+                        if folder {
+                            row.response().context_menu(|ui| {
+                                if action_menu_item(ui, "Переименовать папку…", 10, false).clicked()
+                                {
+                                    rename = Some(text(file, "__path"));
+                                    ui.close_menu();
+                                }
+                            });
+                        }
                     });
                 });
         });
-    toggled
+    (toggled, rename)
 }
 
 fn peer_address(ip: &str, port: i64) -> String {
@@ -1334,6 +1432,81 @@ fn label(key: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn folder_double_click_and_context_menu_target_the_folder() {
+        use super::*;
+        for context_menu in [false, true] {
+            let ctx = egui::Context::default();
+            let rows = file_tree::rows(
+                &json!([{"name":"Folder/file.txt", "index":0, "size":10}]),
+                "",
+                &Default::default(),
+            );
+            let mut target = egui::Pos2::ZERO;
+            let mut renamed = None;
+            for frame in 0..6 {
+                let mut input = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1200.0, 700.0),
+                    )),
+                    time: Some(frame as f64 * 0.08),
+                    ..Default::default()
+                };
+                if frame > 0 && !(context_menu && frame == 3) {
+                    input.events = vec![
+                        egui::Event::PointerMoved(target),
+                        egui::Event::PointerButton {
+                            pos: target,
+                            button: if context_menu && frame <= 2 {
+                                egui::PointerButton::Secondary
+                            } else {
+                                egui::PointerButton::Primary
+                            },
+                            pressed: if context_menu && frame >= 4 {
+                                frame == 4
+                            } else {
+                                frame % 2 == 1
+                            },
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ];
+                }
+                let output = ctx.run(input, |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        let (toggle, rename) =
+                            file_tree_table(ui, "test-hash", &rows, false, |_, _| {});
+                        assert!(toggle.is_none(), "Renaming must not collapse the folder");
+                        if rename.is_some() {
+                            renamed = rename;
+                        }
+                    });
+                });
+                if frame == 0 || (context_menu && frame == 3) {
+                    let label = if frame == 0 {
+                        "Folder  (1)"
+                    } else {
+                        "Переименовать папку…"
+                    };
+                    target = output
+                        .shapes
+                        .iter()
+                        .find_map(|shape| {
+                            if let egui::Shape::Text(text) = &shape.shape {
+                                if text.galley.text() == label {
+                                    return Some(text.pos + egui::vec2(4.0, 4.0));
+                                }
+                            }
+                            None
+                        })
+                        .unwrap_or_else(|| {
+                            panic!("Missing {label}, context={context_menu}, frame={frame}")
+                        });
+                }
+            }
+            assert_eq!(renamed.as_deref(), Some("Folder"));
+        }
+    }
     use super::*;
     #[test]
     fn ipv6_peer_uses_brackets() {

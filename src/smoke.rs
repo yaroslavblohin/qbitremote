@@ -7,6 +7,7 @@ pub struct SmokeApp {
     app: ClientApp,
     started: Instant,
     requested: bool,
+    context_click_stage: u8,
     lifecycle: Option<std::thread::JoinHandle<()>>,
 }
 impl SmokeApp {
@@ -58,11 +59,31 @@ impl SmokeApp {
             app,
             started: Instant::now(),
             requested: false,
+            context_click_stage: 0,
             lifecycle,
         }
     }
 }
 impl App for SmokeApp {
+    fn raw_input_hook(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
+        if std::env::var("QBIT_SMOKE_PAGE").as_deref() != Ok("actions")
+            || self.context_click_stage >= 2
+        {
+            return;
+        }
+        if let Some(pos) =
+            ctx.data(|data| data.get_temp::<egui::Pos2>(egui::Id::new("smoke-torrent-row")))
+        {
+            input.events.push(egui::Event::PointerMoved(pos));
+            input.events.push(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Secondary,
+                pressed: self.context_click_stage == 0,
+                modifiers: egui::Modifiers::NONE,
+            });
+            self.context_click_stage += 1;
+        }
+    }
     fn save(&mut self, _storage: &mut dyn eframe::Storage) {
         // Verify eframe invokes normal persistence, without changing user settings.
         if self.lifecycle.is_some() {

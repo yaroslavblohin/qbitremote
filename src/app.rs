@@ -340,6 +340,7 @@ impl ClientApp {
             .show(ctx, |ui| {
                 ui.heading("qBit Remote");
                 ui.label(format!("Версия {}", env!("CARGO_PKG_VERSION")));
+                ui.label(RichText::new("©2026, Copyleft Yaroslav Blohin").strong());
                 ui.label("Клиент для удалённого управления qBittorrent.");
                 ui.separator();
                 ui.label("Щелчок по заголовку — сортировка.");

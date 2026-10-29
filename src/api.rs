@@ -701,9 +701,10 @@ mod tests {
             )
             .unwrap();
             assert!(api.torrents().unwrap().is_empty());
-            api.execute(Command::Start("abc".into())).unwrap();
-            api.execute(Command::Stop("abc".into())).unwrap();
-            api.execute(Command::Delete("abc".into(), false)).unwrap();
+            api.execute(Command::Start("abc|def".into())).unwrap();
+            api.execute(Command::Stop("abc|def".into())).unwrap();
+            api.execute(Command::Delete("abc|def".into(), false))
+                .unwrap();
             let requests = server.join().unwrap();
             assert!(requests[0].contains("password=a%26b"));
             assert!(requests[1]
@@ -712,6 +713,9 @@ mod tests {
             assert!(requests[3].starts_with(&format!("POST /api/v2/torrents/{start} ")));
             assert!(requests[4].starts_with(&format!("POST /api/v2/torrents/{stop} ")));
             assert!(requests[5].contains("deleteFiles=false"));
+            for request in &requests[3..=5] {
+                assert!(request.contains("hashes=abc%7Cdef"));
+            }
         }
     }
     #[test]

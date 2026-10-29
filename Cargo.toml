@@ -1,6 +1,6 @@
 [package]
 name = "qbit-remote"
-version = "0.2.13"
+version = "0.2.14"
 edition = "2021"
 description = "Windows desktop client for remote qBittorrent servers"
 
@@ -30,4 +30,5 @@ ron = "0.8"
 opt-level = 3
 lto = "thin"
 strip = true
+
 

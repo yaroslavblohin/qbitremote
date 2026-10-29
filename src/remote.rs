@@ -182,6 +182,9 @@ impl Default for Remote {
     }
 }
 impl Remote {
+    pub fn dialog_open(&self) -> bool {
+        self.form.is_some()
+    }
     #[cfg(feature = "ui-smoke")]
     pub fn smoke_fixture(&mut self) {
         if std::env::var("QBIT_SMOKE_PAGE").as_deref() == Ok("files") {
@@ -595,7 +598,7 @@ impl Remote {
             );
         }
     }
-    pub fn torrent_actions(&mut self, ui: &mut egui::Ui, t: &Torrent) {
+    pub fn torrent_actions(&mut self, ui: &mut egui::Ui, t: &Torrent, hashes: &str, count: usize) {
         ui.set_width(290.0);
         ui.spacing_mut().item_spacing.y = 1.0;
         egui::ScrollArea::vertical()
@@ -630,7 +633,7 @@ impl Remote {
                         self.action(
                             label,
                             &format!("torrents/{method}"),
-                            vec![("hashes".into(), t.hash.clone())],
+                            vec![("hashes".into(), hashes.to_owned())],
                         );
                         ui.close_menu();
                     }
@@ -641,13 +644,36 @@ impl Remote {
                     ("Автоуправление", "setAutoManagement", "auto_tmm"),
                     ("Суперсидирование", "setSuperSeeding", "super_seeding"),
                 ] {
-                    let enabled = t.extra.get(key).and_then(Value::as_bool).unwrap_or(false);
+                    if count > 1 {
+                        ui.menu_button(label, |ui| {
+                            for (caption, value) in [
+                                ("Включить для выбранных", true),
+                                ("Выключить для выбранных", false),
+                            ] {
+                                if ui.button(caption).clicked() {
+                                    self.action(
+                                        label,
+                                        &format!("torrents/{method}"),
+                                        vec![
+                                            ("hashes".into(), hashes.into()),
+                                            ("enable".into(), value.to_string()),
+                                            ("value".into(), value.to_string()),
+                                        ],
+                                    );
+                                    ui.close_menu();
+                                }
+                            }
+                        });
+                        continue;
+                    }
+                    let enabled =
+                        count == 1 && t.extra.get(key).and_then(Value::as_bool).unwrap_or(false);
                     if action_menu_item(ui, label, 9, enabled).clicked() {
                         self.action(
                             label,
                             &format!("torrents/{method}"),
                             vec![
-                                ("hashes".into(), t.hash.clone()),
+                                ("hashes".into(), hashes.to_owned()),
                                 ("enable".into(), (!enabled).to_string()),
                                 ("value".into(), (!enabled).to_string()),
                             ],
@@ -700,6 +726,9 @@ impl Remote {
                         t.save_path.clone(),
                     ),
                 ] {
+                    if path == "rename" && count > 1 {
+                        continue;
+                    }
                     if action_menu_item(
                         ui,
                         title,
@@ -712,7 +741,14 @@ impl Remote {
                         self.open_form(
                             title,
                             &format!("torrents/{path}"),
-                            vec![(hk.into(), t.hash.clone())],
+                            vec![(
+                                hk.into(),
+                                if path == "rename" {
+                                    t.hash.clone()
+                                } else {
+                                    hashes.to_owned()
+                                },
+                            )],
                             vec![Field::new(key, label, initial)],
                             "Изменение применяется на удалённом сервере.",
                         );
@@ -720,13 +756,28 @@ impl Remote {
                     }
                 }
                 menu_group(ui, "Ограничения и экспорт");
+                for (title, method) in [
+                    ("Лимит скачивания…", "setDownloadLimit"),
+                    ("Лимит отдачи…", "setUploadLimit"),
+                ] {
+                    if action_menu_item(ui, title, 9, false).clicked() {
+                        self.open_form(
+                            title,
+                            &format!("torrents/{method}"),
+                            vec![("hashes".into(), hashes.into())],
+                            vec![Field::new("limit", "КиБ/с · 0 без ограничения", 0)],
+                            &format!("Применить к выбранным торрентам: {count}"),
+                        );
+                        ui.close_menu();
+                    }
+                }
                 if action_menu_item(ui, "Ограничения раздачи…", 9, false).clicked()
                 {
                     self.open_form(
                         "Ограничения раздачи",
                         "torrents/setShareLimits",
                         vec![
-                            ("hashes".into(), t.hash.clone()),
+                            ("hashes".into(), hashes.to_owned()),
                             ("shareLimitAction".into(), "Default".into()),
                             ("shareLimitsMode".into(), "Default".into()),
                         ],
@@ -751,7 +802,8 @@ impl Remote {
                     );
                     ui.close_menu();
                 }
-                if action_menu_item(ui, "Экспортировать .torrent…", 1, false).clicked()
+                if count == 1
+                    && action_menu_item(ui, "Экспортировать .torrent…", 1, false).clicked()
                 {
                     if let Some(destination) = rfd::FileDialog::new()
                         .add_filter("Torrent", &["torrent"])

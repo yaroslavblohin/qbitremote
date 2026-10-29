@@ -18,6 +18,7 @@ pub struct ClientApp {
     connection_epoch: u64,
     torrents: Vec<Torrent>,
     selected: Option<String>,
+    selection: crate::selection::Selection,
     filter: usize,
     search: String,
     connected: bool,
@@ -98,6 +99,10 @@ impl ClientApp {
             },
         ];
         self.selected = Some("fixture-1".into());
+        self.selection.hashes.insert("fixture-1".into());
+        if std::env::var_os("QBIT_SMOKE_MULTI").is_some() {
+            self.selection.hashes.insert("fixture-2".into());
+        }
         #[cfg(windows)]
         assert!(self.tray.is_some(), "Windows tray creation failed");
     }
@@ -162,6 +167,7 @@ impl ClientApp {
             connection_epoch: 0,
             torrents: vec![],
             selected: None,
+            selection: Default::default(),
             filter: 0,
             search: String::new(),
             connected: false,
@@ -198,6 +204,42 @@ impl ClientApp {
         }
         self
     }
+    fn selected_hashes(&self) -> String {
+        self.torrents
+            .iter()
+            .filter(|t| {
+                self.selection.hashes.contains(&t.hash)
+                    && Self::matches_filter(t, self.filter)
+                    && t.name.to_lowercase().contains(&self.search.to_lowercase())
+            })
+            .map(|t| t.hash.clone())
+            .collect::<Vec<_>>()
+            .join("|")
+    }
+    fn selected_names(&self) -> String {
+        let hashes = self.selected_hashes();
+        self.torrents
+            .iter()
+            .filter(|t| hashes.split('|').any(|h| h == t.hash))
+            .map(|t| t.name.clone())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+    fn prepare_delete(&mut self) {
+        let hashes = self.selected_hashes();
+        if hashes.is_empty() {
+            return;
+        }
+        self.delete = Some((
+            hashes.clone(),
+            format!(
+                "Торрентов: {}\n{}",
+                hashes.split('|').count(),
+                self.selected_names()
+            ),
+        ));
+        self.delete_files = false;
+    }
     fn send(&mut self, command: Command) {
         if self.tx.send(command).is_err() {
             self.notice = "Сетевой поток завершился. Перезапустите приложение.".into();
@@ -213,6 +255,7 @@ impl ClientApp {
         self.connected = false;
         self.torrents.clear();
         self.selected = None;
+        self.selection.clear();
         self.add_open = false;
         self.links.clear();
         self.save_path.clear();
@@ -234,6 +277,7 @@ impl ClientApp {
         self.remote.clear();
         self.torrents.clear();
         self.selected = None;
+        self.selection.clear();
         self.delete = None;
         self.add_open = false;
         self.notice = "Отключено".into();
@@ -285,15 +329,22 @@ impl ClientApp {
                     self.connecting = false;
                     self.torrents.clear();
                     self.selected = None;
+                    self.selection.clear();
                 }
                 Event::Torrents(torrents) => {
                     self.torrents = torrents;
-                    if !self
+                    let available = self
                         .torrents
                         .iter()
-                        .any(|t| Some(&t.hash) == self.selected.as_ref())
+                        .map(|t| t.hash.clone())
+                        .collect::<Vec<_>>();
+                    self.selection.retain(&available);
+                    if self
+                        .selected
+                        .as_ref()
+                        .is_some_and(|h| !self.selection.hashes.contains(h))
                     {
-                        self.selected = None;
+                        self.selected = self.selection.hashes.iter().next().cloned();
                     }
                 }
                 Event::Error(error) => {
@@ -551,11 +602,15 @@ impl ClientApp {
             });
         self.add_open = add_open && self.add_open;
         if let Some((hash, name)) = self.delete.clone() {
-            egui::Window::new("Удалить торрент?")
+            egui::Window::new("Удалить выбранные торренты?")
                 .collapsible(false)
                 .resizable(false)
                 .show(ctx, |ui| {
-                    ui.label(name);
+                    egui::ScrollArea::vertical()
+                        .max_height(220.0)
+                        .show(ui, |ui| {
+                            ui.label(name);
+                        });
                     ui.checkbox(&mut self.delete_files, "Также удалить файлы на сервере");
                     if self.delete_files {
                         ui.colored_label(palette.red, "Файлы будут удалены с удалённого сервера.");
@@ -660,28 +715,22 @@ impl ClientApp {
                     }
                 });
                 ui.menu_button("Правка", |ui| {
-                    let selected = self
-                        .torrents
-                        .iter()
-                        .find(|t| Some(&t.hash) == self.selected.as_ref())
-                        .cloned();
-                    ui.add_enabled_ui(self.connected && selected.is_some(), |ui| {
-                        if ui.button("Запустить торрент").clicked() {
-                            self.send(Command::Start(selected.as_ref().unwrap().hash.clone()));
+                    let hashes = self.selected_hashes();
+                    ui.add_enabled_ui(self.connected && !hashes.is_empty(), |ui| {
+                        if ui.button("Запустить выбранные").clicked() {
+                            self.send(Command::Start(hashes.clone()));
                             ui.close_menu();
                         }
-                        if ui.button("Остановить торрент").clicked() {
-                            self.send(Command::Stop(selected.as_ref().unwrap().hash.clone()));
+                        if ui.button("Остановить выбранные").clicked() {
+                            self.send(Command::Stop(hashes.clone()));
                             ui.close_menu();
                         }
-                        if ui.button("Удалить торрент…").clicked() {
-                            let t = selected.as_ref().unwrap();
-                            self.delete = Some((t.hash.clone(), t.name.clone()));
-                            self.delete_files = false;
+                        if ui.button("Удалить выбранные…").clicked() {
+                            self.prepare_delete();
                             ui.close_menu();
                         }
-                        if ui.button("Копировать название").clicked() {
-                            ctx.copy_text(selected.as_ref().unwrap().name.clone());
+                        if ui.button("Копировать названия").clicked() {
+                            ctx.copy_text(self.selected_names());
                             ui.close_menu();
                         }
                     });
@@ -1011,31 +1060,28 @@ impl eframe::App for ClientApp {
                             .hint_text("Поиск торрентов…")
                             .desired_width(180.0),
                     );
-                    let selected = self.selected.clone();
-                    ui.add_enabled_ui(self.connected && selected.is_some(), |ui| {
+                    let hashes = self.selected_hashes();
+                    ui.add_enabled_ui(self.connected && !hashes.is_empty(), |ui| {
                         if ui
                             .add(action_button("▶  Запустить", palette.green))
                             .clicked()
                         {
-                            self.send(Command::Start(selected.clone().unwrap()));
+                            self.send(Command::Start(hashes.clone()));
                         }
                         if ui
                             .add(action_button("II  Остановить", palette.orange))
                             .clicked()
                         {
-                            self.send(Command::Stop(selected.clone().unwrap()));
+                            self.send(Command::Stop(hashes.clone()));
                         }
                         if ui.add(action_button("×  Удалить", palette.red)).clicked() {
-                            if let Some(t) = self
-                                .torrents
-                                .iter()
-                                .find(|t| Some(&t.hash) == selected.as_ref())
-                            {
-                                self.delete = Some((t.hash.clone(), t.name.clone()));
-                                self.delete_files = false;
-                            }
+                            self.prepare_delete();
                         }
                     });
+                    ui.label(format!(
+                        "Выбрано: {}",
+                        hashes.split('|').filter(|h| !h.is_empty()).count()
+                    ));
                     if ui
                         .add_enabled(self.connected, egui::Button::new("Обновить").frame(false))
                         .clicked()
@@ -1044,31 +1090,7 @@ impl eframe::App for ClientApp {
                     }
                     if self.connected {
                         ui.separator();
-                        ui.colored_label(
-                            palette.blue,
-                            format!(
-                                "↓ {}/с",
-                                bytes(self.torrents.iter().map(|t| t.dlspeed).sum())
-                            ),
-                        )
-                        .on_hover_text("Скорость загрузки");
-                        ui.colored_label(
-                            palette.orange,
-                            format!(
-                                "↑ {}/с",
-                                bytes(self.torrents.iter().map(|t| t.upspeed).sum())
-                            ),
-                        )
-                        .on_hover_text("Скорость отдачи");
-                        ui.colored_label(
-                            palette.green,
-                            format!(
-                                "Готово {}/{}",
-                                self.torrents.iter().filter(|t| t.progress >= 1.0).count(),
-                                self.torrents.len()
-                            ),
-                        )
-                        .on_hover_text("Завершённые торренты / всего");
+                        ui.weak("Ctrl — несколько · Shift — диапазон · Ctrl+A — все");
                     }
                 });
                 if !self.notice.is_empty() {
@@ -1123,6 +1145,31 @@ impl eframe::App for ClientApp {
                         order
                     }
                 });
+                let ordered_hashes: Vec<String> = rows.iter().map(|t| t.hash.clone()).collect();
+                self.selection.retain(&ordered_hashes);
+                if self
+                    .selected
+                    .as_ref()
+                    .is_some_and(|h| !self.selection.hashes.contains(h))
+                {
+                    self.selected = self.selection.hashes.iter().next().cloned();
+                }
+                if !ctx.wants_keyboard_input()
+                    && !self.remote.dialog_open()
+                    && !ctx.memory(|m| m.any_popup_open())
+                    && !self.settings_open
+                    && !self.add_open
+                    && self.delete.is_none()
+                {
+                    if ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::A)) {
+                        self.selection.all(&ordered_hashes);
+                        self.selected = ordered_hashes.first().cloned();
+                    }
+                    if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+                        self.selection.clear();
+                        self.selected = None;
+                    }
+                }
                 if rows.is_empty() {
                     ui.add_space(40.0);
                     ui.label("Торренты не найдены. Добавьте торрент или измените фильтр.");
@@ -1234,7 +1281,7 @@ impl eframe::App for ClientApp {
                                 }
                                 body.rows(18.0, rows.len(), |mut row| {
                                     let t = rows[row.index()];
-                                    row.set_selected(self.selected.as_ref() == Some(&t.hash));
+                                    row.set_selected(self.selection.hashes.contains(&t.hash));
                                     for (_, c) in &visible {
                                         row.col(|ui| {
                                             if c.key == "progress" {
@@ -1263,10 +1310,54 @@ impl eframe::App for ClientApp {
                                         });
                                     }
                                     if response.clicked() || response.secondary_clicked() {
-                                        self.selected = Some(t.hash.clone());
+                                        let modifiers = ctx.input(|i| i.modifiers);
+                                        self.selection.click(
+                                            &t.hash,
+                                            &ordered_hashes,
+                                            modifiers.ctrl,
+                                            modifiers.shift,
+                                            response.secondary_clicked(),
+                                        );
+                                        self.selected = if self.selection.hashes.contains(&t.hash) {
+                                            Some(t.hash.clone())
+                                        } else {
+                                            self.selection.hashes.iter().next().cloned()
+                                        };
                                     }
                                     response.context_menu(|ui| {
-                                        self.remote.torrent_actions(ui, t);
+                                        let hashes = self
+                                            .selection
+                                            .hashes
+                                            .iter()
+                                            .cloned()
+                                            .collect::<Vec<_>>()
+                                            .join("|");
+                                        let count = self.selection.hashes.len();
+                                        ui.weak(format!("Выбрано: {count}"));
+                                        if ui.button("Запустить").clicked() {
+                                            let _ = self.tx.send(Command::Start(hashes.clone()));
+                                            ui.close_menu();
+                                        }
+                                        if ui.button("Остановить").clicked() {
+                                            let _ = self.tx.send(Command::Stop(hashes.clone()));
+                                            ui.close_menu();
+                                        }
+                                        if ui.button("Удалить…").clicked() {
+                                            let names = rows
+                                                .iter()
+                                                .filter(|t| self.selection.hashes.contains(&t.hash))
+                                                .map(|t| t.name.clone())
+                                                .collect::<Vec<_>>()
+                                                .join("\n");
+                                            self.delete = Some((
+                                                hashes.clone(),
+                                                format!("Торрентов: {count}\n{names}"),
+                                            ));
+                                            self.delete_files = false;
+                                            ui.close_menu();
+                                        }
+                                        ui.separator();
+                                        self.remote.torrent_actions(ui, t, &hashes, count);
                                     });
                                 });
                             });

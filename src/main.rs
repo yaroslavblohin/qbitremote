@@ -8,6 +8,7 @@ mod credentials;
 mod icon;
 mod model;
 mod remote;
+mod selection;
 #[cfg(windows)]
 mod single_instance;
 #[cfg(feature = "ui-smoke")]

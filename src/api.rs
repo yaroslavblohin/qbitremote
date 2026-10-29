@@ -10,6 +10,15 @@ pub enum Command {
     Connect(Box<Settings>, String, u64),
     Disconnect(u64),
     Refresh,
+    RssExport {
+        token: u64,
+        destination: std::path::PathBuf,
+    },
+    RssImport {
+        token: u64,
+        rules: serde_json::Value,
+        replace: bool,
+    },
     Start(String),
     Stop(String),
     Delete(String, bool),
@@ -62,6 +71,48 @@ fn base_url(address: &str) -> Result<Url, String> {
 }
 
 impl Api {
+    fn export_rss(&self, destination: &std::path::Path) -> Result<serde_json::Value, String> {
+        let rules = self.remote("rss/rules", &[], false)?;
+        crate::rss_rules::validate(&rules)?;
+        let bytes = serde_json::to_vec_pretty(&rules).map_err(|e| e.to_string())?;
+        std::fs::write(destination, bytes).map_err(|e| format!("Не удалось записать файл: {e}"))?;
+        Ok(
+            serde_json::json!({"summary":format!("Экспортировано правил: {} · {}",rules.as_object().unwrap().len(),destination.display())}),
+        )
+    }
+    fn import_rss(
+        &self,
+        rules: &serde_json::Value,
+        replace: bool,
+    ) -> Result<serde_json::Value, String> {
+        crate::rss_rules::validate(rules)?;
+        let existing = self.remote("rss/rules", &[], false)?;
+        if !existing.is_object() {
+            return Err("Сервер вернул неверный список правил".into());
+        }
+        let mut imported = 0;
+        let mut skipped = 0;
+        for (name, rule) in rules.as_object().unwrap() {
+            if !replace && existing.get(name).is_some() {
+                skipped += 1;
+                continue;
+            }
+            if let Err(e) = self.remote(
+                "rss/setRule",
+                &[
+                    ("ruleName".into(), name.clone()),
+                    ("ruleDef".into(), rule.to_string()),
+                ],
+                true,
+            ) {
+                return Err(format!("Импорт остановлен на «{name}»: {e}. Сохранено: {imported}, пропущено: {skipped}. Ранее применённые правила остаются на сервере."));
+            }
+            imported += 1;
+        }
+        Ok(
+            serde_json::json!({"summary":format!("Импорт RSS: сохранено {imported}, пропущено {skipped}")}),
+        )
+    }
     fn remote(
         &self,
         path: &str,
@@ -312,6 +363,24 @@ pub fn worker(ctx: eframe::egui::Context) -> (Sender<Command>, Receiver<(u64, Ev
                     emit(Event::Disconnected);
                 }
                 Ok(Command::Refresh) => next_poll = Instant::now(),
+                Ok(Command::RssImport {
+                    token,
+                    rules,
+                    replace,
+                }) => {
+                    let result = api
+                        .as_ref()
+                        .ok_or_else(|| "Нет подключения".to_string())
+                        .and_then(|a| a.import_rss(&rules, replace));
+                    emit(Event::Remote { token, result });
+                }
+                Ok(Command::RssExport { token, destination }) => {
+                    let result = api
+                        .as_ref()
+                        .ok_or_else(|| "Нет подключения".to_string())
+                        .and_then(|a| a.export_rss(&destination));
+                    emit(Event::Remote { token, result });
+                }
                 Ok(Command::Remote {
                     token,
                     path,
@@ -383,6 +452,102 @@ pub fn worker(ctx: eframe::egui::Context) -> (Sender<Command>, Receiver<(u64, Ev
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn rss_export_roundtrip_and_http_failure_preserve_destination() {
+        let (address, server) = mock_server(vec![
+            ("204 No Content", ""),
+            ("200 OK", "v5.2.3"),
+            (
+                "200 OK",
+                r#"{"Example":{"enabled":true,"affectedFeeds":[]}}"#,
+            ),
+            ("403 Forbidden", ""),
+        ]);
+        let (api, _) = Api::connect(
+            Settings {
+                address,
+                ..Default::default()
+            },
+            "test".into(),
+        )
+        .unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "qbit-rss-export-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        api.export_rss(&path).unwrap();
+        let original = std::fs::read(&path).unwrap();
+        assert_eq!(
+            crate::rss_rules::parse(&original).unwrap()["Example"]["enabled"],
+            true
+        );
+        assert!(api.export_rss(&path).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        std::fs::remove_file(path).unwrap();
+        server.join().unwrap();
+    }
+    #[test]
+    fn rss_import_skips_conflicts_and_preserves_rule_fields() {
+        let (address, server) = mock_server(vec![
+            ("204 No Content", ""),
+            ("200 OK", "v5.2.3"),
+            ("200 OK", r#"{"Existing":{"enabled":true}}"#),
+            ("204 No Content", ""),
+        ]);
+        let (api, _) = Api::connect(
+            Settings {
+                address,
+                ..Default::default()
+            },
+            "test".into(),
+        )
+        .unwrap();
+        let rules = serde_json::json!({"Existing":{"enabled":false},"Новое & правило":{"enabled":true,"torrentParams":{"save_path":"/downloads/TV"},"futureField":123}});
+        let reply = api.import_rss(&rules, false).unwrap();
+        assert!(reply["summary"]
+            .as_str()
+            .unwrap()
+            .contains("сохранено 1, пропущено 1"));
+        let requests = server.join().unwrap();
+        assert!(requests[3].starts_with("POST /api/v2/rss/setRule "));
+        let body = requests[3].split("\r\n\r\n").nth(1).unwrap();
+        let fields: std::collections::HashMap<_, _> = url::form_urlencoded::parse(body.as_bytes())
+            .into_owned()
+            .collect();
+        assert_eq!(fields["ruleName"], "Новое & правило");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&fields["ruleDef"]).unwrap(),
+            rules["Новое & правило"]
+        );
+    }
+    #[test]
+    fn rss_import_reports_partial_failure_and_replaces_only_when_requested() {
+        let (address, server) = mock_server(vec![
+            ("204 No Content", ""),
+            ("200 OK", "v5.2.3"),
+            ("200 OK", r#"{"A":{"enabled":true}}"#),
+            ("204 No Content", ""),
+            ("403 Forbidden", ""),
+        ]);
+        let (api, _) = Api::connect(
+            Settings {
+                address,
+                ..Default::default()
+            },
+            "test".into(),
+        )
+        .unwrap();
+        let result=api.import_rss(&serde_json::json!({"A":{"enabled":false},"B":{"enabled":true},"C":{"enabled":true}}),true).unwrap_err();
+        assert!(result.contains("Сохранено: 1"));
+        assert!(result.contains("«B»"));
+        let requests = server.join().unwrap();
+        assert_eq!(requests.len(), 5);
+        assert!(requests[3].contains("ruleName=A"));
+    }
     #[test]
     fn multipart_add_accepts_structured_legacy_and_pending_replies() {
         let file = std::env::temp_dir().join(format!(

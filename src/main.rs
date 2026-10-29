@@ -8,6 +8,7 @@ mod credentials;
 mod icon;
 mod model;
 mod remote;
+mod rss_rules;
 mod selection;
 #[cfg(windows)]
 mod single_instance;

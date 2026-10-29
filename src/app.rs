@@ -57,6 +57,12 @@ impl ClientApp {
             _ => crate::theme::Theme::Graphite,
         };
         self.remote.smoke_fixture();
+        self.settings.details_height = if std::env::var("QBIT_SMOKE_PAGE").as_deref() == Ok("files")
+        {
+            390.0
+        } else {
+            280.0
+        };
         self.settings.close_to_tray = false;
         self.settings.zoom = std::env::var("QBIT_SMOKE_ZOOM")
             .ok()

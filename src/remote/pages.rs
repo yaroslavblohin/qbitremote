@@ -1,6 +1,60 @@
 use super::*;
 
 impl Remote {
+    fn rss_transfer(&mut self, export: Option<std::path::PathBuf>, rules: Value, replace: bool) {
+        self.serial += 1;
+        let title = if export.is_some() {
+            "Экспорт RSS"
+        } else {
+            "Импорт RSS"
+        };
+        self.pending.insert(
+            self.serial,
+            Pending {
+                key: title.into(),
+                post: true,
+            },
+        );
+        self.queue.push(if let Some(destination) = export {
+            Command::RssExport {
+                token: self.serial,
+                destination,
+            }
+        } else {
+            Command::RssImport {
+                token: self.serial,
+                rules,
+                replace,
+            }
+        });
+        self.message = format!("{title}: выполнение…");
+        self.error = false;
+    }
+    pub(super) fn rss_import_dialog(&mut self, ctx: &egui::Context, connected: bool) {
+        let Some((rules, mut replace)) = self.rss_import.take() else {
+            return;
+        };
+        let mut open = true;
+        let mut submit = false;
+        let mut cancel = false;
+        egui::Window::new("Импорт правил RSS").open(&mut open).collapsible(false).default_width(520.0).show(ctx,|ui|{
+            let map=rules.as_object().unwrap();
+            ui.label(format!("Правил в файле: {}",map.len()));
+            ui.label("Правила будут добавлены на подключённый сервер. URL лент и пути сохраняются как в файле; сами ленты не создаются. Включённые правила могут начать загрузку сразу.");
+            ui.checkbox(&mut replace,"Заменять существующие правила с такими же именами");
+            ui.weak("По умолчанию совпадения пропускаются. Перед импортом список правил повторно читается с сервера.");
+            egui::ScrollArea::vertical().max_height(230.0).show(ui,|ui|{
+                let existing=self.cache.get("rss-rules").and_then(|c|c.data.as_ref().ok());
+                for name in map.keys(){let collision=existing.is_some_and(|v|v.get(name).is_some());ui.label(format!("{name}{}",if collision {if replace{" — заменить"}else{" — пропустить"}}else{""}));}
+            });
+            ui.horizontal(|ui|{submit=ui.add_enabled(connected&&!map.is_empty(),egui::Button::new("Импортировать")).clicked();cancel=ui.button("Отмена").clicked();});
+        });
+        if submit {
+            self.rss_transfer(None, rules, replace);
+        } else if open && !cancel {
+            self.rss_import = Some((rules, replace));
+        }
+    }
     pub fn page_ui(&mut self, ui: &mut egui::Ui) {
         ui.heading(PAGES.iter().find(|(p, _)| *p == self.page).unwrap().1);
         ui.separator();
@@ -372,6 +426,37 @@ impl Remote {
             ui.selectable_value(&mut self.rss_rules, true, "Правила автозагрузки");
         });
         if self.rss_rules {
+            let busy = self
+                .pending
+                .values()
+                .any(|p| p.key == "Импорт RSS" || p.key == "Экспорт RSS");
+            ui.add_enabled_ui(!busy, |ui| {
+                ui.horizontal(|ui| {
+                    if ui.button("Импорт правил…").clicked() {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .add_filter("Правила RSS qBittorrent", &["json"])
+                            .pick_file()
+                        {
+                            match crate::rss_rules::read(&path) {
+                                Ok(rules) => self.rss_import = Some((rules, false)),
+                                Err(e) => {
+                                    self.message = e;
+                                    self.error = true;
+                                }
+                            }
+                        }
+                    }
+                    if ui.button("Экспорт правил…").clicked() {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .add_filter("Правила RSS qBittorrent", &["json"])
+                            .set_file_name("rss-downloader-rules.json")
+                            .save_file()
+                        {
+                            self.rss_transfer(Some(path), Value::Null, false);
+                        }
+                    }
+                });
+            });
             if ui.button("Добавить правило").clicked() {
                 self.rule_form("",&json!({"enabled":true,"mustContain":"","mustNotContain":"","useRegex":false,"episodeFilter":"","smartFilter":false,"ignoreDays":0,"affectedFeeds":[],"assignedCategory":"","savePath":"","addPaused":false}));
             }

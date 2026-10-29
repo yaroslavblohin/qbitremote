@@ -124,6 +124,7 @@ struct Form {
 }
 
 pub struct Remote {
+    rss_import: Option<(Value, bool)>,
     pub page: Page,
     tab: usize,
     cache: HashMap<String, Cached>,
@@ -153,6 +154,7 @@ pub struct Remote {
 impl Default for Remote {
     fn default() -> Self {
         Self {
+            rss_import: None,
             page: Page::Torrents,
             tab: 0,
             cache: HashMap::new(),
@@ -183,7 +185,7 @@ impl Default for Remote {
 }
 impl Remote {
     pub fn dialog_open(&self) -> bool {
-        self.form.is_some()
+        self.form.is_some() || self.rss_import.is_some()
     }
     #[cfg(feature = "ui-smoke")]
     pub fn smoke_fixture(&mut self) {
@@ -193,8 +195,23 @@ impl Remote {
         self.page = match std::env::var("QBIT_SMOKE_PAGE").as_deref() {
             Ok("speed") => Page::Speed,
             Ok("settings") => Page::Preferences,
+            Ok("rss-import") => Page::Rss,
             _ => Page::Torrents,
         };
+        if self.page == Page::Rss {
+            self.rss_rules = true;
+            self.cache.insert(
+                "rss-rules".into(),
+                Cached {
+                    data: Ok(json!({"Сериал":{"enabled":true}})),
+                    at: Instant::now(),
+                },
+            );
+            self.rss_import = Some((
+                json!({"Сериал":{"enabled":true},"Новые выпуски":{"enabled":false}}),
+                false,
+            ));
+        }
         for (key, value) in [
             (
                 "files/fixture-1",
@@ -241,6 +258,7 @@ impl Remote {
         }
     }
     pub fn clear(&mut self) {
+        self.rss_import = None;
         self.cache.clear();
         self.pending.clear();
         self.queue.clear();
@@ -309,7 +327,10 @@ impl Remote {
                         self.prefs = None;
                         self.prefs_original = None;
                     }
-                    self.message = format!("{}: выполнено", pending.key);
+                    self.message = value["summary"]
+                        .as_str()
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| format!("{}: выполнено", pending.key));
                     self.error = false;
                 }
                 Err(error) => {
@@ -376,6 +397,7 @@ impl Remote {
         });
     }
     pub fn dialogs(&mut self, ctx: &egui::Context, connected: bool) {
+        self.rss_import_dialog(ctx, connected);
         let Some(mut form) = self.form.take() else {
             return;
         };

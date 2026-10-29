@@ -1331,6 +1331,13 @@ impl eframe::App for ClientApp {
                                         };
                                     }
                                     response.context_menu(|ui| {
+                                        ui.set_width(290.0);
+                                        ui.style_mut().override_font_id=Some(egui::FontId::proportional(12.0));
+                                        ui.spacing_mut().item_spacing.y=1.0;
+                                        egui::ScrollArea::vertical()
+                                            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
+                                            .max_height((ctx.screen_rect().height()*0.8).max(180.0))
+                                            .show(ui,|ui| {
                                         let hashes = self
                                             .selection
                                             .hashes
@@ -1340,15 +1347,15 @@ impl eframe::App for ClientApp {
                                             .join("|");
                                         let count = self.selection.hashes.len();
                                         ui.weak(format!("Выбрано: {count}"));
-                                        if ui.button("Запустить").clicked() {
+                                        if crate::remote::action_menu_item(ui,"Запустить",2,false).clicked() {
                                             let _ = self.tx.send(Command::Start(hashes.clone()));
                                             ui.close_menu();
                                         }
-                                        if ui.button("Остановить").clicked() {
+                                        if crate::remote::action_menu_item(ui,"Остановить",3,false).clicked() {
                                             let _ = self.tx.send(Command::Stop(hashes.clone()));
                                             ui.close_menu();
                                         }
-                                        if ui.button("Удалить…").clicked() {
+                                        if crate::remote::action_menu_item(ui,"Удалить…",4,false).clicked() {
                                             let names = rows
                                                 .iter()
                                                 .filter(|t| self.selection.hashes.contains(&t.hash))
@@ -1362,8 +1369,10 @@ impl eframe::App for ClientApp {
                                             self.delete_files = false;
                                             ui.close_menu();
                                         }
-                                        ui.separator();
+
                                         self.remote.torrent_actions(ui, t, &hashes, count);
+
+                                        });
                                     });
                                 });
                             });

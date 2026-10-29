@@ -14,22 +14,24 @@ mod pages;
 
 fn menu_group(ui: &mut egui::Ui, title: &str) {
     let p = crate::theme::palette(ui.ctx());
+    ui.add_space(5.0);
     let (rect, _) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), 17.0), egui::Sense::hover());
-    ui.painter().line_segment(
-        [rect.left_top(), rect.right_top()],
-        egui::Stroke::new(1.0_f32, p.border),
-    );
     ui.painter().text(
         rect.left_center() + egui::vec2(3.0, 2.0),
         egui::Align2::LEFT_CENTER,
         title,
-        egui::FontId::proportional(10.0),
+        egui::FontId::proportional(12.0),
         p.muted,
     );
 }
 
-fn action_menu_item(ui: &mut egui::Ui, label: &str, icon: usize, checked: bool) -> egui::Response {
+pub(crate) fn action_menu_item(
+    ui: &mut egui::Ui,
+    label: &str,
+    icon: usize,
+    checked: bool,
+) -> egui::Response {
     let p = crate::theme::palette(ui.ctx());
     let font = egui::FontId::proportional(12.0);
     let width = ui
@@ -621,234 +623,219 @@ impl Remote {
         }
     }
     pub fn torrent_actions(&mut self, ui: &mut egui::Ui, t: &Torrent, hashes: &str, count: usize) {
-        ui.set_width(290.0);
-        ui.spacing_mut().item_spacing.y = 1.0;
-        egui::ScrollArea::vertical()
-            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
-            .max_height((ui.ctx().screen_rect().height() - 80.0).max(180.0))
-            .show(ui, |ui| {
-                menu_group(ui, "Проверка и трекеры");
-                for (label, method) in [
-                    ("Перепроверить", "recheck"),
-                    ("Обновить трекеры", "reannounce"),
-                    ("Выше в очереди", "increasePrio"),
-                    ("Ниже в очереди", "decreasePrio"),
-                    ("В начало очереди", "topPrio"),
-                    ("В конец очереди", "bottomPrio"),
-                    ("Последовательная загрузка", "toggleSequentialDownload"),
-                    ("Приоритет крайних частей", "toggleFirstLastPiecePrio"),
-                ] {
-                    if method == "increasePrio" {
-                        menu_group(ui, "Очередь");
+        menu_group(ui, "Проверка и трекеры");
+        for (label, method) in [
+            ("Перепроверить", "recheck"),
+            ("Обновить трекеры", "reannounce"),
+            ("Выше в очереди", "increasePrio"),
+            ("Ниже в очереди", "decreasePrio"),
+            ("В начало очереди", "topPrio"),
+            ("В конец очереди", "bottomPrio"),
+            ("Последовательная загрузка", "toggleSequentialDownload"),
+            ("Приоритет крайних частей", "toggleFirstLastPiecePrio"),
+        ] {
+            if method == "increasePrio" {
+                menu_group(ui, "Очередь");
+            }
+            if method == "toggleSequentialDownload" {
+                menu_group(ui, "Режим загрузки");
+            }
+            let icon = match method {
+                "recheck" => 6,
+                "reannounce" => 7,
+                "increasePrio" | "topPrio" => 2,
+                "decreasePrio" | "bottomPrio" => 1,
+                _ => 8,
+            };
+            if action_menu_item(ui, label, icon, false).clicked() {
+                self.action(
+                    label,
+                    &format!("torrents/{method}"),
+                    vec![("hashes".into(), hashes.to_owned())],
+                );
+                ui.close_menu();
+            }
+        }
+        menu_group(ui, "Управление и раздача");
+        for (label, method, key) in [
+            ("Принудительный запуск", "setForceStart", "force_start"),
+            ("Автоуправление", "setAutoManagement", "auto_tmm"),
+            ("Суперсидирование", "setSuperSeeding", "super_seeding"),
+        ] {
+            if count > 1 {
+                ui.menu_button(label, |ui| {
+                    for (caption, value) in [
+                        ("Включить для выбранных", true),
+                        ("Выключить для выбранных", false),
+                    ] {
+                        if ui.button(caption).clicked() {
+                            self.action(
+                                label,
+                                &format!("torrents/{method}"),
+                                vec![
+                                    ("hashes".into(), hashes.into()),
+                                    ("enable".into(), value.to_string()),
+                                    ("value".into(), value.to_string()),
+                                ],
+                            );
+                            ui.close_menu();
+                        }
                     }
-                    if method == "toggleSequentialDownload" {
-                        menu_group(ui, "Режим загрузки");
-                    }
-                    let icon = match method {
-                        "recheck" => 6,
-                        "reannounce" => 7,
-                        "increasePrio" | "topPrio" => 2,
-                        "decreasePrio" | "bottomPrio" => 1,
-                        _ => 8,
-                    };
-                    if action_menu_item(ui, label, icon, false).clicked() {
-                        self.action(
-                            label,
-                            &format!("torrents/{method}"),
-                            vec![("hashes".into(), hashes.to_owned())],
-                        );
-                        ui.close_menu();
-                    }
-                }
-                menu_group(ui, "Управление и раздача");
-                for (label, method, key) in [
-                    ("Принудительный запуск", "setForceStart", "force_start"),
-                    ("Автоуправление", "setAutoManagement", "auto_tmm"),
-                    ("Суперсидирование", "setSuperSeeding", "super_seeding"),
-                ] {
-                    if count > 1 {
-                        ui.menu_button(label, |ui| {
-                            for (caption, value) in [
-                                ("Включить для выбранных", true),
-                                ("Выключить для выбранных", false),
-                            ] {
-                                if ui.button(caption).clicked() {
-                                    self.action(
-                                        label,
-                                        &format!("torrents/{method}"),
-                                        vec![
-                                            ("hashes".into(), hashes.into()),
-                                            ("enable".into(), value.to_string()),
-                                            ("value".into(), value.to_string()),
-                                        ],
-                                    );
-                                    ui.close_menu();
-                                }
-                            }
-                        });
-                        continue;
-                    }
-                    let enabled =
-                        count == 1 && t.extra.get(key).and_then(Value::as_bool).unwrap_or(false);
-                    if action_menu_item(ui, label, 9, enabled).clicked() {
-                        self.action(
-                            label,
-                            &format!("torrents/{method}"),
-                            vec![
-                                ("hashes".into(), hashes.to_owned()),
-                                ("enable".into(), (!enabled).to_string()),
-                                ("value".into(), (!enabled).to_string()),
-                            ],
-                        );
-                        ui.close_menu();
-                    }
-                }
-                menu_group(ui, "Данные и организация");
-                for (title, path, key, label, initial) in [
-                    (
-                        "Переименовать торрент",
-                        "rename",
-                        "name",
-                        "Имя",
-                        t.name.clone(),
+                });
+                continue;
+            }
+            let enabled = count == 1 && t.extra.get(key).and_then(Value::as_bool).unwrap_or(false);
+            if action_menu_item(ui, label, 9, enabled).clicked() {
+                self.action(
+                    label,
+                    &format!("torrents/{method}"),
+                    vec![
+                        ("hashes".into(), hashes.to_owned()),
+                        ("enable".into(), (!enabled).to_string()),
+                        ("value".into(), (!enabled).to_string()),
+                    ],
+                );
+                ui.close_menu();
+            }
+        }
+        menu_group(ui, "Данные и организация");
+        for (title, path, key, label, initial) in [
+            (
+                "Переименовать торрент",
+                "rename",
+                "name",
+                "Имя",
+                t.name.clone(),
+            ),
+            (
+                "Изменить категорию",
+                "setCategory",
+                "category",
+                "Категория (пусто — убрать)",
+                t.category.clone(),
+            ),
+            (
+                "Добавить теги",
+                "addTags",
+                "tags",
+                "Теги через запятую",
+                String::new(),
+            ),
+            (
+                "Удалить теги",
+                "removeTags",
+                "tags",
+                "Теги через запятую",
+                String::new(),
+            ),
+            (
+                "Изменить комментарий",
+                "setComment",
+                "comment",
+                "Комментарий",
+                String::new(),
+            ),
+            (
+                "Переместить данные на сервере",
+                "setLocation",
+                "location",
+                "Новый путь на сервере",
+                t.save_path.clone(),
+            ),
+        ] {
+            if path == "rename" && count > 1 {
+                continue;
+            }
+            if action_menu_item(ui, title, if path == "setLocation" { 2 } else { 10 }, false)
+                .clicked()
+            {
+                let hk = if path == "rename" { "hash" } else { "hashes" };
+                self.open_form(
+                    title,
+                    &format!("torrents/{path}"),
+                    vec![(
+                        hk.into(),
+                        if path == "rename" {
+                            t.hash.clone()
+                        } else {
+                            hashes.to_owned()
+                        },
+                    )],
+                    vec![Field::new(key, label, initial)],
+                    "Изменение применяется на удалённом сервере.",
+                );
+                ui.close_menu();
+            }
+        }
+        menu_group(ui, "Ограничения и экспорт");
+        for (title, method) in [
+            ("Лимит скачивания…", "setDownloadLimit"),
+            ("Лимит отдачи…", "setUploadLimit"),
+        ] {
+            if action_menu_item(ui, title, 9, false).clicked() {
+                self.open_form(
+                    title,
+                    &format!("torrents/{method}"),
+                    vec![("hashes".into(), hashes.into())],
+                    vec![Field::new("limit", "КиБ/с · 0 без ограничения", 0)],
+                    &format!("Применить к выбранным торрентам: {count}"),
+                );
+                ui.close_menu();
+            }
+        }
+        if action_menu_item(ui, "Ограничения раздачи…", 9, false).clicked() {
+            self.open_form(
+                "Ограничения раздачи",
+                "torrents/setShareLimits",
+                vec![
+                    ("hashes".into(), hashes.to_owned()),
+                    ("shareLimitAction".into(), "Default".into()),
+                    ("shareLimitsMode".into(), "Default".into()),
+                ],
+                vec![
+                    Field::new(
+                        "ratioLimit",
+                        "Рейтинг · -2 по умолчанию, -1 без ограничения",
+                        -2,
                     ),
-                    (
-                        "Изменить категорию",
-                        "setCategory",
-                        "category",
-                        "Категория (пусто — убрать)",
-                        t.category.clone(),
+                    Field::new(
+                        "seedingTimeLimit",
+                        "Время раздачи, минуты · -2 по умолчанию, -1 без ограничения",
+                        -2,
                     ),
-                    (
-                        "Добавить теги",
-                        "addTags",
-                        "tags",
-                        "Теги через запятую",
-                        String::new(),
+                    Field::new(
+                        "inactiveSeedingTimeLimit",
+                        "Неактивная раздача, минуты · -2 по умолчанию, -1 без ограничения",
+                        -2,
                     ),
-                    (
-                        "Удалить теги",
-                        "removeTags",
-                        "tags",
-                        "Теги через запятую",
-                        String::new(),
-                    ),
-                    (
-                        "Изменить комментарий",
-                        "setComment",
-                        "comment",
-                        "Комментарий",
-                        String::new(),
-                    ),
-                    (
-                        "Переместить данные на сервере",
-                        "setLocation",
-                        "location",
-                        "Новый путь на сервере",
-                        t.save_path.clone(),
-                    ),
-                ] {
-                    if path == "rename" && count > 1 {
-                        continue;
-                    }
-                    if action_menu_item(
-                        ui,
-                        title,
-                        if path == "setLocation" { 2 } else { 10 },
-                        false,
-                    )
-                    .clicked()
-                    {
-                        let hk = if path == "rename" { "hash" } else { "hashes" };
-                        self.open_form(
-                            title,
-                            &format!("torrents/{path}"),
-                            vec![(
-                                hk.into(),
-                                if path == "rename" {
-                                    t.hash.clone()
-                                } else {
-                                    hashes.to_owned()
-                                },
-                            )],
-                            vec![Field::new(key, label, initial)],
-                            "Изменение применяется на удалённом сервере.",
-                        );
-                        ui.close_menu();
-                    }
-                }
-                menu_group(ui, "Ограничения и экспорт");
-                for (title, method) in [
-                    ("Лимит скачивания…", "setDownloadLimit"),
-                    ("Лимит отдачи…", "setUploadLimit"),
-                ] {
-                    if action_menu_item(ui, title, 9, false).clicked() {
-                        self.open_form(
-                            title,
-                            &format!("torrents/{method}"),
-                            vec![("hashes".into(), hashes.into())],
-                            vec![Field::new("limit", "КиБ/с · 0 без ограничения", 0)],
-                            &format!("Применить к выбранным торрентам: {count}"),
-                        );
-                        ui.close_menu();
-                    }
-                }
-                if action_menu_item(ui, "Ограничения раздачи…", 9, false).clicked()
-                {
-                    self.open_form(
-                        "Ограничения раздачи",
-                        "torrents/setShareLimits",
-                        vec![
-                            ("hashes".into(), hashes.to_owned()),
-                            ("shareLimitAction".into(), "Default".into()),
-                            ("shareLimitsMode".into(), "Default".into()),
-                        ],
-                        vec![
-                            Field::new(
-                                "ratioLimit",
-                                "Рейтинг · -2 по умолчанию, -1 без ограничения",
-                                -2,
-                            ),
-                            Field::new(
-                                "seedingTimeLimit",
-                                "Время раздачи, минуты · -2 по умолчанию, -1 без ограничения",
-                                -2,
-                            ),
-                            Field::new(
-                                "inactiveSeedingTimeLimit",
-                                "Неактивная раздача, минуты · -2 по умолчанию, -1 без ограничения",
-                                -2,
-                            ),
-                        ],
-                        "",
-                    );
-                    ui.close_menu();
-                }
-                if count == 1
-                    && action_menu_item(ui, "Экспортировать .torrent…", 1, false).clicked()
-                {
-                    if let Some(destination) = rfd::FileDialog::new()
-                        .add_filter("Torrent", &["torrent"])
-                        .set_file_name("export.torrent")
-                        .save_file()
-                    {
-                        self.serial += 1;
-                        self.pending.insert(
-                            self.serial,
-                            Pending {
-                                key: "Экспорт торрента".into(),
-                                post: true,
-                            },
-                        );
-                        self.queue.push(Command::Export {
-                            token: self.serial,
-                            hash: t.hash.clone(),
-                            destination,
-                        });
-                    }
-                    ui.close_menu();
-                }
-            });
+                ],
+                "",
+            );
+            ui.close_menu();
+        }
+        if count == 1 && action_menu_item(ui, "Экспортировать .torrent…", 1, false).clicked()
+        {
+            if let Some(destination) = rfd::FileDialog::new()
+                .add_filter("Torrent", &["torrent"])
+                .set_file_name("export.torrent")
+                .save_file()
+            {
+                self.serial += 1;
+                self.pending.insert(
+                    self.serial,
+                    Pending {
+                        key: "Экспорт торрента".into(),
+                        post: true,
+                    },
+                );
+                self.queue.push(Command::Export {
+                    token: self.serial,
+                    hash: t.hash.clone(),
+                    destination,
+                });
+            }
+            ui.close_menu();
+        }
     }
     fn trackers(&mut self, ui: &mut egui::Ui, hash: &str, data: &Value) {
         ui.horizontal(|ui| {

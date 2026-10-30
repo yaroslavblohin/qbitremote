@@ -12,11 +12,11 @@ try {
             throw "Tray test timed out: $state"
         }
         $log = Get-Content "dist\tray-$state.log" -Raw
-        if ($process.ExitCode -ne 0 -or $log -notmatch 'Tray lifecycle: normal exit') {
+        if ($process.ExitCode -ne 0 -or $log -notmatch 'Tray lifecycle: normal exit' -or $log -notmatch 'Tray lifecycle: save called' -or $log -notmatch 'Tray clicks: left toggles, right preserves visibility, double-click suppressed, minimized restored') {
             Get-Content "dist\tray-$state-error.log"
             throw "Tray test failed: $state"
         }
-        Write-Output "PASS: $state (10 hide/restore cycles, normal save and exit)"
+        Write-Output "PASS: $state (10 close/restore + 10 left-click toggle cycles, right/double-click checks, normal save and exit)"
     }
 } finally {
     Remove-Item Env:\QBIT_SMOKE_TRAY -ErrorAction SilentlyContinue

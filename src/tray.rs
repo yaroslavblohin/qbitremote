@@ -1,21 +1,23 @@
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU8, Ordering},
     Arc,
 };
 use tray_icon::{
     menu::{Menu, MenuEvent, MenuItem},
-    Icon, TrayIcon, TrayIconBuilder, TrayIconEvent,
+    Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    PostMessageW, SetForegroundWindow, ShowWindowAsync, SW_RESTORE, SW_SHOWNOACTIVATE, WM_CLOSE,
+    IsIconic, IsWindowVisible, PostMessageW, SetForegroundWindow, ShowWindowAsync, SW_HIDE,
+    SW_RESTORE, SW_SHOWNOACTIVATE, WM_CLOSE,
 };
 
 #[derive(Clone)]
 pub struct WindowControl {
     hwnd: isize,
     quitting: Arc<AtomicBool>,
-    restored: Arc<AtomicBool>,
+    visibility: Arc<AtomicU8>,
+    suppress_left_release: Arc<AtomicBool>,
 }
 impl WindowControl {
     pub fn quitting(&self) -> bool {
@@ -25,15 +27,45 @@ impl WindowControl {
         if self.quitting() {
             return;
         }
-        self.restored.store(true, Ordering::Release);
+        self.visibility.store(1, Ordering::Release);
         // Never lock egui from a callback inside the Win32 message loop.
         unsafe {
             ShowWindowAsync(self.hwnd as _, SW_RESTORE);
             SetForegroundWindow(self.hwnd as _);
         }
     }
-    pub fn take_restored(&self) -> bool {
-        self.restored.swap(false, Ordering::AcqRel)
+    pub fn take_visibility(&self) -> Option<bool> {
+        match self.visibility.swap(0, Ordering::AcqRel) {
+            1 => Some(true),
+            2 => Some(false),
+            _ => None,
+        }
+    }
+    pub fn toggle(&self) {
+        if self.quitting() {
+            return;
+        }
+        if unsafe { IsWindowVisible(self.hwnd as _) != 0 && IsIconic(self.hwnd as _) == 0 } {
+            self.visibility.store(2, Ordering::Release);
+            unsafe {
+                ShowWindowAsync(self.hwnd as _, SW_HIDE);
+            }
+        } else {
+            self.restore();
+        }
+    }
+    fn handle_event(&self, event: &TrayIconEvent) {
+        if toggle_on_event(event, &self.suppress_left_release) {
+            self.toggle();
+        }
+    }
+    #[cfg(feature = "ui-smoke")]
+    pub fn smoke_click(&self, button: MouseButton, state: MouseButtonState) {
+        self.handle_event(&click_event(button, state));
+    }
+    #[cfg(feature = "ui-smoke")]
+    pub fn smoke_double_click(&self) {
+        self.handle_event(&double_click_event(MouseButton::Left));
     }
     pub fn exit(&self) {
         self.quitting.store(true, Ordering::Release);
@@ -68,6 +100,51 @@ impl WindowControl {
     }
 }
 
+fn toggle_on_event(event: &TrayIconEvent, suppress_release: &AtomicBool) -> bool {
+    match event {
+        TrayIconEvent::Click {
+            button: MouseButton::Left,
+            button_state: MouseButtonState::Down,
+            ..
+        } => {
+            suppress_release.store(false, Ordering::Release);
+            false
+        }
+        TrayIconEvent::Click {
+            button: MouseButton::Left,
+            button_state: MouseButtonState::Up,
+            ..
+        } => !suppress_release.swap(false, Ordering::AcqRel),
+        TrayIconEvent::DoubleClick {
+            button: MouseButton::Left,
+            ..
+        } => {
+            suppress_release.store(true, Ordering::Release);
+            false
+        }
+        _ => false,
+    }
+}
+#[cfg(any(test, feature = "ui-smoke"))]
+fn click_event(button: MouseButton, button_state: MouseButtonState) -> TrayIconEvent {
+    TrayIconEvent::Click {
+        id: Default::default(),
+        position: Default::default(),
+        rect: Default::default(),
+        button,
+        button_state,
+    }
+}
+#[cfg(any(test, feature = "ui-smoke"))]
+fn double_click_event(button: MouseButton) -> TrayIconEvent {
+    TrayIconEvent::DoubleClick {
+        id: Default::default(),
+        position: Default::default(),
+        rect: Default::default(),
+        button,
+    }
+}
+
 pub struct Tray {
     _icon: TrayIcon,
     pub control: WindowControl,
@@ -82,7 +159,8 @@ impl Tray {
         let control = WindowControl {
             hwnd: handle.hwnd.get(),
             quitting: Arc::new(AtomicBool::new(false)),
-            restored: Arc::new(AtomicBool::new(false)),
+            visibility: Arc::new(AtomicU8::new(0)),
+            suppress_left_release: Arc::new(AtomicBool::new(false)),
         };
         let menu = Menu::new();
         let show = MenuItem::new("Открыть qBit Remote", true, None);
@@ -94,6 +172,7 @@ impl Tray {
             .with_tooltip("qBit Remote")
             .with_icon(icon)
             .with_menu(Box::new(menu))
+            .with_menu_on_left_click(false)
             .build()
             .map_err(|e| e.to_string())?;
         let show_id = show.id().clone();
@@ -109,9 +188,7 @@ impl Tray {
         }));
         let click_control = control.clone();
         TrayIconEvent::set_event_handler(Some(move |event| {
-            if matches!(event, TrayIconEvent::DoubleClick { .. }) {
-                click_control.restore();
-            }
+            click_control.handle_event(&event);
         }));
         Ok(Self {
             _icon: tray,
@@ -138,6 +215,58 @@ pub fn should_hide(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn only_left_release_toggles_visibility() {
+        let suppress = AtomicBool::new(false);
+        for button in [MouseButton::Right, MouseButton::Middle] {
+            for state in [MouseButtonState::Down, MouseButtonState::Up] {
+                assert!(!toggle_on_event(&click_event(button, state), &suppress));
+            }
+            assert!(!toggle_on_event(&double_click_event(button), &suppress));
+        }
+        assert!(!toggle_on_event(
+            &click_event(MouseButton::Left, MouseButtonState::Down),
+            &suppress
+        ));
+        assert!(toggle_on_event(
+            &click_event(MouseButton::Left, MouseButtonState::Up),
+            &suppress
+        ));
+    }
+    #[test]
+    fn windows_double_click_sequence_toggles_once_and_next_click_still_works() {
+        let suppress = AtomicBool::new(false);
+        let events = [
+            click_event(MouseButton::Left, MouseButtonState::Down),
+            click_event(MouseButton::Left, MouseButtonState::Up),
+            double_click_event(MouseButton::Left),
+            click_event(MouseButton::Left, MouseButtonState::Up),
+        ];
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| toggle_on_event(event, &suppress))
+                .count(),
+            1
+        );
+        assert!(!toggle_on_event(
+            &click_event(MouseButton::Left, MouseButtonState::Down),
+            &suppress
+        ));
+        assert!(toggle_on_event(
+            &click_event(MouseButton::Left, MouseButtonState::Up),
+            &suppress
+        ));
+        let _ = toggle_on_event(&double_click_event(MouseButton::Left), &suppress);
+        assert!(!toggle_on_event(
+            &click_event(MouseButton::Left, MouseButtonState::Down),
+            &suppress
+        ));
+        assert!(toggle_on_event(
+            &click_event(MouseButton::Left, MouseButtonState::Up),
+            &suppress
+        ));
+    }
     #[test]
     fn explicit_exit_always_wins_over_close_to_tray() {
         for close in [false, true] {

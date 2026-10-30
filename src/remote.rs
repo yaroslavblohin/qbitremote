@@ -126,6 +126,7 @@ struct Form {
 }
 
 pub struct Remote {
+    pub add_sources: Vec<crate::add_torrent::Source>,
     rss_import: Option<(Value, bool)>,
     pub page: Page,
     tab: usize,
@@ -156,6 +157,7 @@ pub struct Remote {
 impl Default for Remote {
     fn default() -> Self {
         Self {
+            add_sources: Vec::new(),
             rss_import: None,
             page: Page::Torrents,
             tab: 0,
@@ -260,6 +262,7 @@ impl Remote {
         }
     }
     pub fn clear(&mut self) {
+        self.add_sources.clear();
         self.rss_import = None;
         self.cache.clear();
         self.pending.clear();

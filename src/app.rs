@@ -7,6 +7,11 @@ use egui_extras::{Column, TableBuilder};
 use std::sync::mpsc::{Receiver, Sender};
 
 pub struct ClientApp {
+    server_free_space: Option<u64>,
+    add_flow: crate::add_torrent::AddFlow,
+    pending_files: std::collections::VecDeque<std::path::PathBuf>,
+    #[cfg(windows)]
+    activation: Option<crate::activation::Listener>,
     about_open: bool,
     dragged_column: Option<String>,
     column_layout: Vec<String>,
@@ -57,6 +62,9 @@ impl ClientApp {
             _ => crate::theme::Theme::Graphite,
         };
         self.remote.smoke_fixture();
+        if std::env::var("QBIT_SMOKE_PAGE").as_deref() == Ok("add-torrent") {
+            self.add_flow.smoke_fixture();
+        }
         self.settings.details_height = if std::env::var("QBIT_SMOKE_PAGE").as_deref() == Ok("files")
         {
             390.0
@@ -69,6 +77,12 @@ impl ClientApp {
             .and_then(|v| v.parse().ok())
             .unwrap_or(1.0);
         self.connected = true;
+        self.server_free_space = Some(
+            std::env::var("QBIT_SMOKE_FREE_SPACE")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(348 * 1024 * 1024 * 1024),
+        );
         self.version = "5.x · TEST".into();
         self.notice = "Тестовые данные · проверка интерфейса без подключения к серверу".into();
         self.torrents = vec![
@@ -162,6 +176,11 @@ impl ClientApp {
             && !cfg!(feature = "ui-smoke");
         let (sort, descending) = crate::columns::restored_sort(&settings);
         let mut app = Self {
+            server_free_space: None,
+            add_flow: Default::default(),
+            pending_files: Default::default(),
+            #[cfg(windows)]
+            activation: None,
             about_open: false,
             dragged_column: None,
             column_layout: Vec::new(),
@@ -201,7 +220,59 @@ impl ClientApp {
         if auto_connect {
             app.connect();
         }
+        #[cfg(windows)]
+        if !cfg!(feature = "ui-smoke") {
+            match crate::activation::Listener::start(ctx.clone()) {
+                Ok(listener) => app.activation = Some(listener),
+                Err(error) => {
+                    app.notice = format!("Приём файлов из Windows недоступен: {error}");
+                    app.is_error = true;
+                }
+            }
+        }
         app
+    }
+    pub fn open_files(&mut self, files: Vec<std::path::PathBuf>) {
+        if files.is_empty() {
+            return;
+        }
+        for file in files {
+            if !self.pending_files.contains(&file) {
+                self.pending_files.push_back(file);
+            }
+        }
+        self.remote.page = crate::remote::Page::Torrents;
+        if !self.connected && !self.connecting {
+            if self.settings.servers.is_empty() {
+                self.settings_open = true;
+            } else {
+                self.connect();
+            }
+        }
+    }
+    fn receive_activation(&mut self, ctx: &egui::Context) {
+        #[cfg(windows)]
+        while let Some(args) = self.activation.as_ref().and_then(|a| a.rx.try_recv().ok()) {
+            if let Some(tray) = &self.tray {
+                tray.control.restore();
+            }
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            match crate::activation::files(args) {
+                Ok(files) => self.open_files(files),
+                Err(error) => {
+                    self.notice = error;
+                    self.is_error = true;
+                }
+            }
+        }
+        if self.connected {
+            while let Some(file) = self.pending_files.pop_front() {
+                self.add_flow
+                    .push(crate::add_torrent::Source::File(file), String::new());
+            }
+        }
     }
     fn with_tray_notice(mut self, error: Option<String>) -> Self {
         if let Some(error) = error {
@@ -253,6 +324,8 @@ impl ClientApp {
         }
     }
     fn connect(&mut self) {
+        self.server_free_space = None;
+        self.add_flow.reset_session();
         self.settings.save_server();
         self.connection_epoch += 1;
         self.remote.clear();
@@ -276,6 +349,8 @@ impl ClientApp {
         ));
     }
     fn disconnect(&mut self) {
+        self.server_free_space = None;
+        self.add_flow.reset_session();
         self.connection_epoch += 1;
         self.send(Command::Disconnect(self.connection_epoch));
         self.connected = false;
@@ -312,6 +387,22 @@ impl ClientApp {
                 continue;
             }
             match event {
+                Event::ServerSpace(free) => self.server_free_space = free,
+                Event::TorrentPrepared { id, result } => self.add_flow.prepared(id, result),
+                Event::TorrentAdded { id, result } => {
+                    if let Some(result) = self.add_flow.added(id, result) {
+                        match result {
+                            Ok(message) => {
+                                self.notice = message;
+                                self.is_error = false;
+                            }
+                            Err(error) => {
+                                self.notice = error;
+                                self.is_error = true;
+                            }
+                        }
+                    }
+                }
                 Event::Connected(v) => {
                     self.version = v;
                     self.connected = true;
@@ -329,6 +420,8 @@ impl ClientApp {
                 }
                 Event::Remote { token, result } => self.remote.reply(token, result),
                 Event::Disconnected => {
+                    self.server_free_space = None;
+                    self.add_flow.reset_session();
                     self.remote.clear();
                     self.delete = None;
                     self.connected = false;
@@ -389,6 +482,15 @@ impl ClientApp {
         }
     }
     fn dialogs(&mut self, ctx: &egui::Context) {
+        if !self.connected && !self.pending_files.is_empty() {
+            egui::Window::new("Торренты ожидают подключения").collapsible(false).default_width(450.0).show(ctx,|ui|{
+                ui.label(format!("Файлов: {} · сервер: {}",self.pending_files.len(),self.settings.server_name));
+                ui.label("После подключения откроется диалог выбора файлов. Добавление на сервер выполняется только после подтверждения.");
+                egui::ScrollArea::vertical().max_height(150.0).show(ui,|ui|{for file in &self.pending_files{ui.label(file.file_name().unwrap_or_default().to_string_lossy());}});
+                if self.connecting {ui.spinner();}else if ui.button("Настроить подключение").clicked(){self.settings_open=true;}
+                if ui.button("Отменить добавление файлов").clicked(){self.pending_files.clear();}
+            });
+        }
         let palette = crate::theme::palette(ctx);
         egui::Window::new("О программе")
             .open(&mut self.about_open)
@@ -585,10 +687,15 @@ impl ClientApp {
                         )
                         .clicked()
                     {
-                        self.send(Command::Add(
-                            self.links.trim().into(),
-                            self.save_path.clone(),
-                        ));
+                        for url in self.links.lines().map(str::trim).filter(|s| !s.is_empty()) {
+                            self.add_flow.push(
+                                crate::add_torrent::Source::Link {
+                                    url: url.into(),
+                                    downloader: String::new(),
+                                },
+                                self.save_path.clone(),
+                            );
+                        }
                         self.links.clear();
                         self.add_open = false;
                     }
@@ -600,7 +707,10 @@ impl ClientApp {
                             .add_filter("Torrent", &["torrent"])
                             .pick_file()
                         {
-                            self.send(Command::File(file, self.save_path.clone()));
+                            self.add_flow.push(
+                                crate::add_torrent::Source::File(file),
+                                self.save_path.clone(),
+                            );
                             self.add_open = false;
                         }
                     }
@@ -864,15 +974,21 @@ impl eframe::App for ClientApp {
         #[cfg(feature = "ui-smoke")]
         ctx.set_zoom_factor(self.settings.zoom);
         self.receive();
-        // Native restoration wakes hidden windows; mirror it into eframe's
-        // cached viewport builder or the next Visible(false) is discarded.
+        self.receive_activation(ctx);
+        if let Some(command) = self.add_flow.tick(self.connected) {
+            self.send(command);
+        }
+        // Mirror native tray changes into eframe's cached viewport visibility.
         #[cfg(windows)]
-        if self
+        if let Some(visible) = self
             .tray
             .as_ref()
-            .is_some_and(|t| t.control.take_restored())
+            .and_then(|tray| tray.control.take_visibility())
         {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(visible));
+            if visible {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            }
             ctx.request_repaint();
         }
         #[cfg(windows)]
@@ -887,33 +1003,39 @@ impl eframe::App for ClientApp {
         }
         self.main_menu(ctx);
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
+            let compact = ui.available_width() < 700.0;
             ui.horizontal(|ui| {
-                ui.colored_label(
-                    if self.connected {
-                        palette.accent
-                    } else {
-                        palette.muted
-                    },
-                    if self.connected {
-                        "● Подключено"
-                    } else if self.connecting {
-                        "◌ Подключение"
-                    } else {
-                        "○ Нет подключения"
-                    },
-                );
-                if self.connected {
-                    ui.small(format!("qBittorrent {}", self.version));
-                }
-                ui.separator();
-                ui.label(format!(
-                    "↓ {}/с",
-                    bytes(self.torrents.iter().map(|t| t.dlspeed).sum())
-                ));
-                ui.label(format!(
-                    "↑ {}/с",
-                    bytes(self.torrents.iter().map(|t| t.upspeed).sum())
-                ));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    crate::server_space::badge(ui, self.server_free_space, self.connected, compact);
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        ui.colored_label(
+                            if self.connected {
+                                palette.accent
+                            } else {
+                                palette.muted
+                            },
+                            if self.connected {
+                                "● Подключено"
+                            } else if self.connecting {
+                                "◌ Подключение"
+                            } else {
+                                "○ Нет подключения"
+                            },
+                        );
+                        if self.connected && !compact {
+                            ui.small(format!("qBittorrent {}", self.version));
+                        }
+                        ui.separator();
+                        ui.label(format!(
+                            "↓ {}/с",
+                            bytes(self.torrents.iter().map(|t| t.dlspeed).sum())
+                        ));
+                        ui.label(format!(
+                            "↑ {}/с",
+                            bytes(self.torrents.iter().map(|t| t.upspeed).sum())
+                        ));
+                    });
+                });
             });
         });
         egui::SidePanel::left("sidebar")
@@ -1160,7 +1282,7 @@ impl eframe::App for ClientApp {
                 {
                     self.selected = self.selection.hashes.iter().next().cloned();
                 }
-                if !ctx.wants_keyboard_input()
+                if !ctx.wants_keyboard_input() && !self.add_flow.active()
                     && !self.remote.dialog_open()
                     && !ctx.memory(|m| m.any_popup_open())
                     && !self.settings_open
@@ -1394,6 +1516,15 @@ impl eframe::App for ClientApp {
                 }
             });
         self.dialogs(ctx);
+        for source in std::mem::take(&mut self.remote.add_sources) {
+            self.add_flow.push(source, String::new());
+        }
+        if let Some(command) = self
+            .add_flow
+            .ui(ctx, self.connected, &self.settings.server_name)
+        {
+            self.send(command);
+        }
         self.remote.dialogs(ctx, self.connected);
         for command in self.remote.commands() {
             self.send(command);

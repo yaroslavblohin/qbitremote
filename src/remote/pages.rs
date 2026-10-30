@@ -220,30 +220,10 @@ impl Remote {
             ],
             |ui, row| {
                 if ui.small_button("Добавить").clicked() {
-                    if !text(row, "engineName").is_empty() {
-                        self.open_form(
-                            "Добавить результат поиска",
-                            "search/downloadTorrent",
-                            vec![
-                                ("torrentUrl".into(), text(row, "fileUrl")),
-                                ("pluginName".into(), text(row, "engineName")),
-                            ],
-                            vec![],
-                            &text(row, "fileName"),
-                        );
-                    } else {
-                        self.open_form(
-                            "Добавить результат поиска",
-                            "torrents/add",
-                            vec![("urls".into(), text(row, "fileUrl"))],
-                            vec![Field::new(
-                                "savepath",
-                                "Путь на сервере (пусто — по умолчанию)",
-                                "",
-                            )],
-                            &text(row, "fileName"),
-                        );
-                    }
+                    self.add_sources.push(crate::add_torrent::Source::Link {
+                        url: text(row, "fileUrl"),
+                        downloader: text(row, "engineName"),
+                    });
                 }
                 let url = text(row, "descrLink");
                 if url.starts_with("https://") || url.starts_with("http://") {
@@ -641,13 +621,10 @@ impl Remote {
                                 ui.label(text(article, "title"));
                                 let url = text(article, "torrentURL");
                                 if !url.is_empty() && ui.small_button("Скачать").clicked() {
-                                    self.open_form(
-                                        "Добавить из RSS",
-                                        "torrents/add",
-                                        vec![("urls".into(), url)],
-                                        vec![],
-                                        &text(article, "title"),
-                                    );
+                                    self.add_sources.push(crate::add_torrent::Source::Link {
+                                        url,
+                                        downloader: String::new(),
+                                    });
                                 }
                             });
                         }

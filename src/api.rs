@@ -7,6 +7,14 @@ use std::{
 use url::Url;
 
 pub enum Command {
+    PrepareTorrent {
+        id: u64,
+        source: crate::add_torrent::Source,
+    },
+    CommitTorrent {
+        id: u64,
+        plan: Box<crate::add_torrent::Plan>,
+    },
     Connect(Box<Settings>, String, u64),
     Disconnect(u64),
     Refresh,
@@ -22,7 +30,9 @@ pub enum Command {
     Start(String),
     Stop(String),
     Delete(String, bool),
+    #[cfg(test)]
     Add(String, String),
+    #[cfg(test)]
     File(std::path::PathBuf, String),
     Remote {
         token: u64,
@@ -37,6 +47,15 @@ pub enum Command {
     },
 }
 pub enum Event {
+    ServerSpace(Option<u64>),
+    TorrentPrepared {
+        id: u64,
+        result: Result<serde_json::Value, String>,
+    },
+    TorrentAdded {
+        id: u64,
+        result: Result<String, String>,
+    },
     Connected(String),
     Disconnected,
     Torrents(Vec<Torrent>),
@@ -71,6 +90,85 @@ fn base_url(address: &str) -> Result<Url, String> {
 }
 
 impl Api {
+    fn server_space(
+        &self,
+        state: &mut crate::server_space::Snapshot,
+    ) -> Result<Option<u64>, String> {
+        let data: serde_json::Value = self
+            .client
+            .get(self.endpoint("sync/maindata"))
+            .query(&[("rid", state.rid)])
+            .header("Referer", self.base.as_str())
+            .timeout(Duration::from_secs(4))
+            .send()
+            .map_err(error)?
+            .error_for_status()
+            .map_err(error)?
+            .json()
+            .map_err(error)?;
+        state.apply(&data)
+    }
+    fn prepare_torrent(
+        &self,
+        source: &crate::add_torrent::Source,
+    ) -> Result<serde_json::Value, String> {
+        use crate::add_torrent::Source;
+        match source {
+            Source::File(path) => {
+                let form = reqwest::blocking::multipart::Form::new()
+                    .file("torrents", path)
+                    .map_err(|e| e.to_string())?;
+                let response = self
+                    .client
+                    .post(self.endpoint("torrents/parseMetadata"))
+                    .header("Referer", self.base.as_str())
+                    .multipart(form)
+                    .send()
+                    .map_err(error)?;
+                if response.status() == reqwest::StatusCode::NOT_FOUND {
+                    return Err("Сервер не поддерживает предварительный выбор файлов. Нужен qBittorrent 5.2 или новее.".into());
+                }
+                let values: serde_json::Value = response
+                    .error_for_status()
+                    .map_err(error)?
+                    .json()
+                    .map_err(error)?;
+                values
+                    .as_array()
+                    .and_then(|a| a.first())
+                    .cloned()
+                    .ok_or("Не удалось прочитать метаданные торрента".into())
+            }
+            Source::Link { url, downloader } => self.remote(
+                "torrents/fetchMetadata",
+                &[
+                    ("source".into(), url.clone()),
+                    ("downloader".into(), downloader.clone()),
+                ],
+                true,
+            ),
+        }
+    }
+    fn commit_torrent(&self, plan: &crate::add_torrent::Plan) -> Result<String, String> {
+        let fields = plan.fields()?;
+        let existing = self.remote(
+            "torrents/info",
+            &[("hashes".into(), plan.metadata.hash.clone())],
+            false,
+        )?;
+        if !existing
+            .as_array()
+            .ok_or("Сервер вернул некорректный список торрентов")?
+            .is_empty()
+        {
+            return Err("Этот торрент уже есть на сервере. Измените его файлы и приоритеты во вкладке «Файлы».".into());
+        }
+        let fields = fields
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect::<Vec<_>>();
+        add_reply(&self.post("torrents/add", &fields)?)
+    }
     fn export_rss(&self, destination: &std::path::Path) -> Result<serde_json::Value, String> {
         let rules = self.remote("rss/rules", &[], false)?;
         crate::rss_rules::validate(&rules)?;
@@ -252,10 +350,12 @@ impl Api {
                     ],
                 )?;
             }
+            #[cfg(test)]
             Command::Add(links, path) => {
                 let body = self.post("torrents/add", &[("urls", &links), ("savepath", &path)])?;
                 return add_reply(&body);
             }
+            #[cfg(test)]
             Command::File(file, path) => {
                 let form = reqwest::blocking::multipart::Form::new()
                     .text("savepath", path)
@@ -335,6 +435,7 @@ pub fn worker(ctx: eframe::egui::Context) -> (Sender<Command>, Receiver<(u64, Ev
         };
         let mut api: Option<Api> = None;
         let mut next_poll = Instant::now();
+        let mut space = crate::server_space::Snapshot::default();
         loop {
             let wait = if api.is_some() {
                 next_poll.saturating_duration_since(Instant::now())
@@ -343,6 +444,7 @@ pub fn worker(ctx: eframe::egui::Context) -> (Sender<Command>, Receiver<(u64, Ev
             };
             match rx.recv_timeout(wait) {
                 Ok(Command::Connect(settings, password, session)) => {
+                    space = Default::default();
                     epoch.set(session);
                     api = None;
                     match Api::connect(*settings, password) {
@@ -363,6 +465,21 @@ pub fn worker(ctx: eframe::egui::Context) -> (Sender<Command>, Receiver<(u64, Ev
                     emit(Event::Disconnected);
                 }
                 Ok(Command::Refresh) => next_poll = Instant::now(),
+                Ok(Command::PrepareTorrent { id, source }) => {
+                    let result = api
+                        .as_ref()
+                        .ok_or_else(|| "Нет подключения".to_string())
+                        .and_then(|a| a.prepare_torrent(&source));
+                    emit(Event::TorrentPrepared { id, result });
+                }
+                Ok(Command::CommitTorrent { id, plan }) => {
+                    let result = api
+                        .as_ref()
+                        .ok_or_else(|| "Нет подключения".to_string())
+                        .and_then(|a| a.commit_torrent(&plan));
+                    emit(Event::TorrentAdded { id, result });
+                    next_poll = Instant::now();
+                }
                 Ok(Command::RssImport {
                     token,
                     rules,
@@ -432,7 +549,17 @@ pub fn worker(ctx: eframe::egui::Context) -> (Sender<Command>, Receiver<(u64, Ev
             if Instant::now() >= next_poll {
                 if let Some(client) = &api {
                     match client.torrents() {
-                        Ok(torrents) => emit(Event::Torrents(torrents)),
+                        Ok(torrents) => {
+                            emit(Event::Torrents(torrents));
+                            let free = match client.server_space(&mut space) {
+                                Ok(free) => free,
+                                Err(_) => {
+                                    space = Default::default();
+                                    None
+                                }
+                            };
+                            emit(Event::ServerSpace(free));
+                        }
                         Err(e) => {
                             emit(Event::Error(format!(
                                 "Обновление не удалось: {e}. Подключитесь повторно."
@@ -452,6 +579,239 @@ pub fn worker(ctx: eframe::egui::Context) -> (Sender<Command>, Receiver<(u64, Ev
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn invalid_or_all_skipped_plan_sends_no_server_mutations() {
+        for priority in [0, 2] {
+            let (address, server) = mock_server(vec![("204 No Content", ""), ("200 OK", "v5.2.3")]);
+            let (api, _) = Api::connect(
+                Settings {
+                    address,
+                    ..Default::default()
+                },
+                "test".into(),
+            )
+            .unwrap();
+            let plan = crate::add_torrent::Plan {
+                metadata: crate::add_torrent::Metadata {
+                    hash: "a".repeat(40),
+                    name: "test".into(),
+                    files: vec![crate::add_torrent::File {
+                        path: "one".into(),
+                        size: 1,
+                        priority,
+                    }],
+                },
+                path: String::new(),
+                category: String::new(),
+                tags: String::new(),
+                start: true,
+                top: false,
+                sequential: false,
+            };
+            assert!(api.commit_torrent(&plan).is_err());
+            assert_eq!(server.join().unwrap().len(), 2);
+        }
+    }
+    #[test]
+    #[ignore = "requires explicit server credentials; reads server status only"]
+    fn live_server_space() {
+        let (api, _) = Api::connect(
+            Settings {
+                address: std::env::var("QBIT_TEST_ADDRESS").unwrap(),
+                username: std::env::var("QBIT_TEST_USERNAME").unwrap(),
+                ..Default::default()
+            },
+            std::env::var("QBIT_TEST_PASSWORD").unwrap(),
+        )
+        .unwrap();
+        let mut state = crate::server_space::Snapshot::default();
+        let free = api.server_space(&mut state).unwrap();
+        assert!(state.rid > 0);
+        let _ = api.server_space(&mut state).unwrap();
+        println!(
+            "Server free space: {}",
+            free.map(crate::model::bytes)
+                .unwrap_or_else(|| "unavailable".into())
+        );
+    }
+    #[test]
+    fn server_space_polls_incrementally_and_reports_http_errors() {
+        let (address, server) = mock_server(vec![
+            ("204 No Content", ""),
+            ("200 OK", "v5.2.3"),
+            (
+                "200 OK",
+                r#"{"rid":42,"full_update":true,"server_state":{"free_space_on_disk":987654321000}}"#,
+            ),
+            ("200 OK", r#"{"rid":43,"server_state":{"dl_info_speed":5}}"#),
+            ("403 Forbidden", ""),
+        ]);
+        let (api, _) = Api::connect(
+            Settings {
+                address,
+                ..Default::default()
+            },
+            "test".into(),
+        )
+        .unwrap();
+        let mut state = crate::server_space::Snapshot::default();
+        assert_eq!(api.server_space(&mut state).unwrap(), Some(987654321000));
+        assert_eq!(api.server_space(&mut state).unwrap(), Some(987654321000));
+        assert!(api.server_space(&mut state).is_err());
+        let requests = server.join().unwrap();
+        assert!(requests[2].starts_with("GET /api/v2/sync/maindata?rid=0 "));
+        assert!(requests[3].starts_with("GET /api/v2/sync/maindata?rid=42 "));
+        assert!(requests[4].starts_with("GET /api/v2/sync/maindata?rid=43 "));
+    }
+    #[test]
+    fn selected_files_are_applied_in_the_add_request_without_early_start() {
+        for start in [false, true] {
+            let (address, server) = mock_server(vec![
+                ("204 No Content", ""),
+                ("200 OK", "v5.2.3"),
+                ("200 OK", "[]"),
+                ("204 No Content", ""),
+            ]);
+            let (api, _) = Api::connect(
+                Settings {
+                    address,
+                    ..Default::default()
+                },
+                "test".into(),
+            )
+            .unwrap();
+            let plan = crate::add_torrent::Plan {
+                metadata: crate::add_torrent::Metadata {
+                    hash: "a".repeat(40),
+                    name: "test".into(),
+                    files: vec![
+                        crate::add_torrent::File {
+                            path: "one".into(),
+                            size: 10,
+                            priority: 0,
+                        },
+                        crate::add_torrent::File {
+                            path: "two".into(),
+                            size: 20,
+                            priority: 6,
+                        },
+                    ],
+                },
+                path: "/data".into(),
+                category: "TV".into(),
+                tags: String::new(),
+                start,
+                top: false,
+                sequential: false,
+            };
+            api.commit_torrent(&plan).unwrap();
+            let requests = server.join().unwrap();
+            assert!(requests[2].starts_with("GET /api/v2/torrents/info?"));
+            assert!(requests[3].starts_with("POST /api/v2/torrents/add "));
+            let fields: std::collections::HashMap<_, _> = url::form_urlencoded::parse(
+                requests[3].split("\r\n\r\n").nth(1).unwrap().as_bytes(),
+            )
+            .into_owned()
+            .collect();
+            assert_eq!(fields["filePriorities"], "0,6");
+            assert_eq!(fields["stopped"], (!start).to_string());
+            assert_eq!(fields["category"], "TV");
+            assert_eq!(requests.len(), 4);
+        }
+    }
+    #[test]
+    fn existing_torrent_is_never_changed_by_new_add_dialog() {
+        let (address, server) = mock_server(vec![
+            ("204 No Content", ""),
+            ("200 OK", "v5.2.3"),
+            (
+                "200 OK",
+                r#"[{"hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]"#,
+            ),
+        ]);
+        let (api, _) = Api::connect(
+            Settings {
+                address,
+                ..Default::default()
+            },
+            "test".into(),
+        )
+        .unwrap();
+        let plan = crate::add_torrent::Plan {
+            metadata: crate::add_torrent::Metadata {
+                hash: "a".repeat(40),
+                name: "test".into(),
+                files: vec![crate::add_torrent::File {
+                    path: "one".into(),
+                    size: 10,
+                    priority: 1,
+                }],
+            },
+            path: String::new(),
+            category: String::new(),
+            tags: String::new(),
+            start: true,
+            top: false,
+            sequential: false,
+        };
+        assert!(api.commit_torrent(&plan).unwrap_err().contains("уже есть"));
+        assert_eq!(server.join().unwrap().len(), 3);
+    }
+    #[test]
+    #[ignore = "requires explicit server credentials; metadata only, no torrent is added"]
+    fn live_metadata_preview_only() {
+        let (api, _) = Api::connect(
+            Settings {
+                address: std::env::var("QBIT_TEST_ADDRESS").unwrap(),
+                username: std::env::var("QBIT_TEST_USERNAME").unwrap(),
+                ..Default::default()
+            },
+            std::env::var("QBIT_TEST_PASSWORD").unwrap(),
+        )
+        .unwrap();
+        let before = api.torrents().unwrap().len();
+        let path =
+            std::env::temp_dir().join(format!("qbit-preview-{}.torrent", std::process::id()));
+        std::fs::write(&path,b"d4:infod6:lengthi1e4:name4:test12:piece lengthi16384e6:pieces20:12345678901234567890ee").unwrap();
+        let result = api.prepare_torrent(&crate::add_torrent::Source::File(path.clone()));
+        std::fs::remove_file(path).unwrap();
+        let meta = crate::add_torrent::Metadata::parse(&result.unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(meta.files.len(), 1);
+        assert_eq!(api.torrents().unwrap().len(), before);
+        println!(
+            "Metadata parsed; {} file; no torrent added",
+            meta.files.len()
+        );
+    }
+    #[test]
+    fn shell_torrent_file_is_uploaded_as_multipart() {
+        let (address, server) = mock_server(vec![
+            ("204 No Content", ""),
+            ("200 OK", "v5.2.3"),
+            ("204 No Content", ""),
+        ]);
+        let (api, _) = Api::connect(
+            Settings {
+                address,
+                ..Default::default()
+            },
+            "test".into(),
+        )
+        .unwrap();
+        let path = std::env::temp_dir().join(format!("qbit shell {}.torrent", std::process::id()));
+        let payload =
+            b"d4:infod4:name4:test6:lengthi1e12:piece lengthi1e6:pieces20:12345678901234567890ee";
+        std::fs::write(&path, payload).unwrap();
+        api.execute(Command::File(path.clone(), String::new()))
+            .unwrap();
+        let requests = server.join().unwrap();
+        assert!(requests[2].starts_with("POST /api/v2/torrents/add "));
+        assert!(requests[2].contains("name=\"torrents\"; filename="));
+        assert!(requests[2].contains(std::str::from_utf8(payload).unwrap()));
+        std::fs::remove_file(path).unwrap();
+    }
     #[test]
     fn rss_export_roundtrip_and_http_failure_preserve_destination() {
         let (address, server) = mock_server(vec![

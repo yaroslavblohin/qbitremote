@@ -16,6 +16,10 @@ impl SmokeApp {
         let lifecycle = if std::env::var_os("QBIT_SMOKE_TRAY").is_some() {
             let control = app.smoke_tray_control();
             Some(std::thread::spawn(move || {
+                let click = |button| {
+                    control.smoke_click(button, tray_icon::MouseButtonState::Down);
+                    control.smoke_click(button, tray_icon::MouseButtonState::Up);
+                };
                 let wait_for = |visible| {
                     let deadline = Instant::now() + Duration::from_secs(3);
                     while control.visible() != visible {
@@ -35,7 +39,43 @@ impl SmokeApp {
                     control.restore();
                     wait_for(true);
                     std::thread::sleep(Duration::from_millis(100));
+                    click(tray_icon::MouseButton::Left);
+                    wait_for(false);
+                    std::thread::sleep(Duration::from_millis(80));
+                    click(tray_icon::MouseButton::Right);
+                    std::thread::sleep(Duration::from_millis(80));
+                    assert!(!control.visible(), "right-click changed window visibility");
+                    click(tray_icon::MouseButton::Left);
+                    wait_for(true);
+                    std::thread::sleep(Duration::from_millis(80));
                 }
+                click(tray_icon::MouseButton::Left);
+                wait_for(false);
+                control.smoke_double_click();
+                control.smoke_click(
+                    tray_icon::MouseButton::Left,
+                    tray_icon::MouseButtonState::Up,
+                );
+                std::thread::sleep(Duration::from_millis(100));
+                assert!(!control.visible(), "double-click toggled the window twice");
+                click(tray_icon::MouseButton::Left);
+                wait_for(true);
+                control.minimize();
+                let deadline = Instant::now() + Duration::from_secs(3);
+                while !control.minimized() {
+                    assert!(Instant::now() < deadline, "window did not minimize");
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                click(tray_icon::MouseButton::Left);
+                let deadline = Instant::now() + Duration::from_secs(3);
+                while control.minimized() {
+                    assert!(
+                        Instant::now() < deadline,
+                        "left-click did not restore minimized window"
+                    );
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                println!("Tray clicks: left toggles, right preserves visibility, double-click suppressed, minimized restored");
                 let exit_state = std::env::var("QBIT_SMOKE_TRAY").unwrap();
                 if exit_state == "minimized" {
                     control.minimize();

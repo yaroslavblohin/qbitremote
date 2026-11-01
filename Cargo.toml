@@ -1,11 +1,11 @@
 [package]
 name = "qbit-remote"
-version = "0.2.39"
+version = "0.2.52"
 edition = "2021"
 description = "Windows desktop client for remote qBittorrent servers"
 
 [features]
-ui-smoke = ["dep:image"]
+ui-smoke = []
 
 [dependencies]
 eframe = { version = "0.31.1", default-features = false, features = ["default_fonts", "glow", "persistence"] }
@@ -16,7 +16,7 @@ serde_json = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 url = "2"
 rfd = "0.15"
-image = { version = "0.25", default-features = false, features = ["png"], optional = true }
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [target.'cfg(windows)'.dependencies]
 tray-icon = "0.20"

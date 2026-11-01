@@ -8,6 +8,7 @@ pub struct State<'a> {
     pub download: u64,
     pub upload: u64,
     pub free: Option<u64>,
+    pub selected: usize,
 }
 
 pub fn show(ctx: &egui::Context, state: &State<'_>) {
@@ -23,7 +24,7 @@ pub fn show(ctx: &egui::Context, state: &State<'_>) {
         });
 }
 
-fn paint(ui: &mut egui::Ui, state: &State<'_>) -> [Rect; 4] {
+fn paint(ui: &mut egui::Ui, state: &State<'_>) -> [Rect; 5] {
     let p = crate::theme::palette(ui.ctx());
     let width = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 32.0), egui::Sense::hover());
@@ -129,6 +130,36 @@ fn paint(ui: &mut egui::Ui, state: &State<'_>) -> [Rect; 4] {
         ],
         egui::Stroke::new(1.0_f32, p.border),
     );
+    let selected_text = painter.layout_no_wrap(
+        format!(
+            "{}: {}",
+            if width < 600.0 {
+                "Выбр."
+            } else {
+                "Выбрано"
+            },
+            state.selected
+        ),
+        font.clone(),
+        p.muted,
+    );
+    let selected_width = selected_text.size().x.min((right - rect.left()).max(0.0));
+    let selected_rect = Rect::from_min_max(
+        egui::pos2((right - selected_width).max(rect.left()), rect.top()),
+        egui::pos2(right.max(rect.left()), rect.bottom()),
+    );
+    painter.with_clip_rect(selected_rect).galley(
+        selected_rect.left_center() - egui::vec2(0.0, selected_text.size().y / 2.0),
+        selected_text,
+        p.muted,
+    );
+    ui.interact(
+        selected_rect,
+        ui.id().with("selected-count"),
+        egui::Sense::hover(),
+    )
+    .on_hover_text(format!("Выбрано торрентов: {}", state.selected));
+    right = (selected_rect.left() - gap).max(rect.left());
     let connection =
         Rect::from_min_max(rect.min, egui::pos2(right.max(rect.left()), rect.bottom()));
     let status = if state.connected {
@@ -139,9 +170,13 @@ fn paint(ui: &mut egui::Ui, state: &State<'_>) -> [Rect; 4] {
         "Нет подключения"
     };
     let text = if width >= 820.0 && !state.server.is_empty() {
-        format!("{status}  ·  {}", state.server)
+        format!(
+            "{status}  ·  {}  ·  Windows {}",
+            state.server,
+            env!("CARGO_PKG_VERSION")
+        )
     } else {
-        status.into()
+        format!("{status}  ·  Windows {}", env!("CARGO_PKG_VERSION"))
     };
     let clipped = painter.with_clip_rect(connection);
     clipped.circle_filled(
@@ -179,7 +214,7 @@ fn paint(ui: &mut egui::Ui, state: &State<'_>) -> [Rect; 4] {
             String::new()
         }
     ));
-    [connection, cells[0], cells[1], cells[2]]
+    [connection, selected_rect, cells[0], cells[1], cells[2]]
 }
 
 #[cfg(test)]
@@ -201,6 +236,7 @@ mod tests {
                         download: 9_000_000_000,
                         upload: 9_000_000_000,
                         free: Some(9_000_000_000_000),
+                        selected: 9999,
                     };
                     let _ = ctx.run(
                         egui::RawInput {
@@ -214,7 +250,7 @@ mod tests {
                             egui::CentralPanel::default().show(ctx, |ui| {
                                 let bounds = ui.available_rect_before_wrap();
                                 let cells = paint(ui, &state);
-                                assert!(cells[0].width() > 60.0);
+                                assert!(cells[2].width() > 60.0);
                                 for pair in cells.windows(2) {
                                     assert!(pair[0].right() <= pair[1].left());
                                 }

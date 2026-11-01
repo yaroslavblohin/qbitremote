@@ -5,6 +5,7 @@ mod add_torrent;
 mod api;
 mod app;
 mod columns;
+mod country_flags;
 #[cfg(windows)]
 mod credentials;
 mod file_icons;
@@ -26,6 +27,12 @@ mod tray;
 mod ui_icons;
 
 fn main() -> eframe::Result {
+    #[cfg(feature = "ui-smoke")]
+    if std::env::var_os("QBIT_IMPORT_BRANDING").is_some() {
+        icon::import_branding();
+        return Ok(());
+    }
+
     #[cfg(feature = "ui-smoke")]
     if std::env::var_os("QBIT_EXPORT_BRANDING").is_some() {
         icon::export_branding();

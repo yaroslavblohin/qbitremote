@@ -197,6 +197,8 @@ impl Remote {
     pub fn smoke_fixture(&mut self) {
         self.tab = match std::env::var("QBIT_SMOKE_PAGE").as_deref() {
             Ok("files") => 4,
+            Ok("trackers") => 1,
+            Ok("peers") => 2,
             Ok("pieces") => 5,
             Ok("torrent-graph") => 6,
             _ => 0,
@@ -232,6 +234,26 @@ impl Remote {
                     {"name":"Linux/Docs/install.txt", "index":1, "size":12000, "progress":1.0, "priority":1, "availability":2.0},
                     {"name":"Linux/Docs/cover.png", "index":2, "size":4000, "progress":1.0, "priority":0, "availability":2.0},
                     {"name":"examples.zip", "index":3, "size":8000, "progress":1.0, "priority":1, "availability":1.0}
+                ]),
+            ),
+            (
+                "torrentPeers/fixture-1",
+                json!({"peers": {
+                    "1": {"ip":"192.0.2.1","port":51413,"country":"Россия","country_code":"ru","connection":"µTP","client":"qBittorrent/5.3.0","progress":0.98,"dl_speed":120000,"up_speed":240000,"downloaded":6400000,"uploaded":9200000,"flags":"u HX E"},
+                    "2": {"ip":"192.0.2.2","port":51413,"country":"Китай","country_code":"cn","connection":"BT","client":"Transmission/4.0","progress":0.32,"dl_speed":0,"up_speed":32000},
+                    "3": {"ip":"192.0.2.3","port":51413,"country":"Бразилия","country_code":"br","connection":"µTP","client":"qBittorrent/5.2.0","progress":0.7},
+                    "4": {"ip":"192.0.2.4","port":51413,"country":"Греция","country_code":"gr","connection":"BT","client":"libtorrent/2.0","progress":1.0},
+                    "5": {"ip":"192.0.2.5","port":51413,"country":"","country_code":"","connection":"BT","client":"qBittorrent/5.3.0","progress":0.5}
+                }}),
+            ),
+            (
+                "trackers/fixture-1",
+                json!([
+                    {"url":"** [DHT] **","status":2,"tier":-1,"num_seeds":0,"num_leeches":0,"num_peers":8,"num_downloaded":-1},
+                    {"url":"** [PeX] **","status":2,"tier":-1,"num_seeds":0,"num_leeches":0,"num_peers":3,"num_downloaded":-1},
+                    {"url":"** [LSD] **","status":2,"tier":-1,"num_seeds":0,"num_leeches":0,"num_peers":0,"num_downloaded":-1},
+                    {"url":"https://tracker.example.org/announce","status":2,"tier":0,"num_seeds":124,"num_leeches":18,"num_peers":32,"num_downloaded":1580},
+                    {"url":"udp://backup.example.org:6969/announce","status":4,"tier":1,"num_seeds":-1,"num_leeches":-1,"num_peers":-1,"num_downloaded":-1,"msg":"Не удалось связаться с трекером: время ожидания истекло"}
                 ]),
             ),
             (
@@ -697,6 +719,21 @@ impl Remote {
             }
         }).response.on_disabled_hover_text("Выберите один торрент для открытия файлов или папки");
     }
+    pub fn move_in_queue(&mut self, hashes: &str, up: bool) {
+        self.action(
+            if up {
+                "Выше в очереди"
+            } else {
+                "Ниже в очереди"
+            },
+            if up {
+                "torrents/increasePrio"
+            } else {
+                "torrents/decreasePrio"
+            },
+            vec![("hashes".into(), hashes.into())],
+        );
+    }
     pub fn torrent_actions(
         &mut self,
         ui: &mut egui::Ui,
@@ -972,60 +1009,123 @@ impl Remote {
                 );
             }
         });
-        egui::ScrollArea::both().id_salt("trackers").show(ui, |ui| {
-            for tracker in data.as_array().into_iter().flatten() {
-                let url = text(tracker, "url");
-                ui.group(|ui| {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label(RichText::new(&url).strong());
-                        ui.label(match number(tracker, "status") {
-                            0 => "Отключён",
-                            1 => "Не обращались",
-                            2 => "Работает",
-                            3 => "Обновляется",
-                            4 => "Ошибка",
-                            _ => "Неизвестно",
-                        });
-                        if url.contains("://") {
-                            if ui.small_button("Изменить").clicked() {
-                                self.open_form(
-                                    "Изменить трекер",
-                                    "torrents/editTracker",
-                                    vec![
-                                        ("hash".into(), hash.into()),
-                                        ("origUrl".into(), url.clone()),
-                                    ],
-                                    vec![Field::new("newUrl", "Новый URL", &url)],
-                                    "",
-                                );
-                            }
-                            if ui.small_button("Удалить").clicked() {
-                                self.open_form(
-                                    "Удалить трекер",
-                                    "torrents/removeTrackers",
-                                    vec![
-                                        ("hash".into(), hash.into()),
-                                        ("urls".into(), url.clone()),
-                                    ],
-                                    vec![],
-                                    &url,
-                                );
-                            }
+        let palette = crate::theme::palette(ui.ctx());
+        egui::ScrollArea::horizontal()
+            .id_salt("trackers-horizontal")
+            .show(ui, |ui| {
+                ui.set_min_width(920.0);
+                TableBuilder::new(ui)
+                    .id_salt("trackers-table")
+                    .striped(true)
+                    .resizable(true)
+                    .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                    .column(Column::remainder().at_least(200.0).clip(true))
+                    .column(Column::initial(100.0).at_least(90.0).clip(true))
+                    .columns(Column::initial(54.0).at_least(40.0).clip(true), 5)
+                    .column(Column::initial(120.0).at_least(80.0).clip(true))
+                    .column(Column::exact(165.0))
+                    .header(24.0, |mut header| {
+                        for title in [
+                            "Трекер",
+                            "Состояние",
+                            "Уровень",
+                            "Сиды",
+                            "Личи",
+                            "Пиры",
+                            "Скачан",
+                            "Сообщение",
+                            "Действия",
+                        ] {
+                            header.col(|ui| {
+                                ui.weak(title);
+                            });
                         }
+                    })
+                    .body(|body| {
+                        let trackers = data.as_array().map(Vec::as_slice).unwrap_or(&[]);
+                        body.rows(24.0, trackers.len(), |mut row| {
+                            let tracker = &trackers[row.index()];
+                            let url = text(tracker, "url");
+                            row.col(|ui| {
+                                let display = url.trim_matches('*').trim();
+                                ui.add(egui::Label::new(display).truncate())
+                                    .on_hover_text(&url);
+                            });
+                            row.col(|ui| {
+                                let (label, color) = match number(tracker, "status") {
+                                    0 => ("Отключён", palette.muted),
+                                    1 => ("Не обращались", palette.muted),
+                                    2 => ("Работает", palette.green),
+                                    3 => ("Обновляется", palette.blue),
+                                    4 => ("Ошибка", palette.red),
+                                    _ => ("Неизвестно", palette.muted),
+                                };
+                                ui.add(
+                                    egui::Label::new(RichText::new(label).color(color)).truncate(),
+                                );
+                            });
+                            for key in [
+                                "tier",
+                                "num_seeds",
+                                "num_leeches",
+                                "num_peers",
+                                "num_downloaded",
+                            ] {
+                                row.col(|ui| {
+                                    let n = number(tracker, key);
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            ui.label(if n < 0 {
+                                                "—".into()
+                                            } else {
+                                                n.to_string()
+                                            });
+                                        },
+                                    );
+                                });
+                            }
+                            row.col(|ui| {
+                                let msg = text(tracker, "msg");
+                                ui.add(
+                                    egui::Label::new(if msg.is_empty() { "—" } else { &msg })
+                                        .truncate(),
+                                )
+                                .on_hover_text(&msg);
+                            });
+                            row.col(|ui| {
+                                if url.contains("://") {
+                                    if ui.small_button("Изменить").clicked() {
+                                        self.open_form(
+                                            "Изменить трекер",
+                                            "torrents/editTracker",
+                                            vec![
+                                                ("hash".into(), hash.into()),
+                                                ("origUrl".into(), url.clone()),
+                                            ],
+                                            vec![Field::new("newUrl", "Новый URL", &url)],
+                                            "",
+                                        );
+                                    }
+                                    if ui.small_button("Удалить").clicked() {
+                                        self.open_form(
+                                            "Удалить трекер",
+                                            "torrents/removeTrackers",
+                                            vec![
+                                                ("hash".into(), hash.into()),
+                                                ("urls".into(), url.clone()),
+                                            ],
+                                            vec![],
+                                            &url,
+                                        );
+                                    }
+                                }
+                            });
+                        });
                     });
-                    ui.label(format!(
-                        "Уровень {} · сиды {} · личи {} · пиры {} · скачан {}",
-                        number(tracker, "tier"),
-                        number(tracker, "num_seeds"),
-                        number(tracker, "num_leeches"),
-                        number(tracker, "num_peers"),
-                        number(tracker, "num_downloaded")
-                    ));
-                    ui.label(text(tracker, "msg"));
-                });
-            }
-        });
+            });
     }
+
     fn peers(&mut self, ui: &mut egui::Ui, hash: &str, data: &Value) {
         if ui.button("Добавить пиров").clicked() {
             self.open_form(
@@ -1565,8 +1665,16 @@ fn data_table(
                     let item = &rows[r.index()];
                     for (key, _) in columns {
                         r.col(|ui| {
-                            ui.add(egui::Label::new(format_value(key, &item[*key])).truncate())
-                                .on_hover_text(format_value(key, &item[*key]));
+                            if id == "peers" && *key == "country" {
+                                crate::country_flags::country(
+                                    ui,
+                                    &text(item, "country_code"),
+                                    &text(item, "country"),
+                                );
+                            } else {
+                                ui.add(egui::Label::new(format_value(key, &item[*key])).truncate())
+                                    .on_hover_text(format_value(key, &item[*key]));
+                            }
                         });
                     }
                     r.col(|ui| {

@@ -62,6 +62,10 @@ impl ClientApp {
             _ => crate::theme::Theme::Graphite,
         };
         self.remote.smoke_fixture();
+        if std::env::var("QBIT_SMOKE_PAGE").as_deref() == Ok("about") {
+            self.about_open = true;
+        }
+
         if std::env::var("QBIT_SMOKE_PAGE").as_deref() == Ok("path-mappings") {
             self.settings.path_mappings = vec![
                 crate::path_mapping::PathMapping {
@@ -158,6 +162,18 @@ impl ClientApp {
                 .get_mut(&egui::FontFamily::Proportional)
                 .unwrap()
                 .insert(0, "segoe".into());
+            let mut wordmark = vec!["segoe".to_owned()];
+            if let Ok(font) = std::fs::read("C:/Windows/Fonts/seguisb.ttf") {
+                fonts.font_data.insert(
+                    "brand-semibold".into(),
+                    egui::FontData::from_owned(font).into(),
+                );
+                wordmark.insert(0, "brand-semibold".into());
+            }
+            fonts
+                .families
+                .insert(egui::FontFamily::Name("qbit-wordmark".into()), wordmark);
+            ctx.data_mut(|data| data.insert_temp(egui::Id::new("brand-font"), true));
             ctx.set_fonts(fonts);
         }
         let stored: Option<Settings> = cc.storage.and_then(|s| eframe::get_value(s, "settings"));
@@ -508,16 +524,27 @@ impl ClientApp {
             .open(&mut self.about_open)
             .collapsible(false)
             .resizable(false)
+            .default_width(560.0)
+            .max_width((ctx.screen_rect().width() - 48.0).clamp(280.0, 560.0))
+            .max_height((ctx.screen_rect().height() - 64.0).max(240.0))
+            .vscroll(true)
             .show(ctx, |ui| {
-                ui.heading("qBit Remote");
-                ui.label(format!("Версия {}", env!("CARGO_PKG_VERSION")));
-                ui.label(RichText::new("©2026, Copyleft Yaroslav Blohin").strong());
-                ui.label("Клиент для удалённого управления qBittorrent.");
+                ui.vertical_centered(|ui| {
+                    crate::icon::presentation(ui);
+                    ui.add_space(8.0);
+                    ui.label(
+                        RichText::new(format!("Версия {}", env!("CARGO_PKG_VERSION"))).strong(),
+                    );
+                    ui.label("©2026, Copyleft Yaroslav Blohin");
+                    ui.label("Клиент для удалённого управления qBittorrent.");
+                });
                 ui.separator();
-                ui.label("Щелчок по заголовку — сортировка.");
-                ui.label("Перетаскивание заголовка — порядок колонок.");
-                ui.label("Перетаскивание границы — ширина колонки.");
-                ui.label("Вид → Колонки — выбор отображаемых полей.");
+                ui.collapsing("Управление интерфейсом", |ui| {
+                    ui.label("Щелчок по заголовку — сортировка.");
+                    ui.label("Перетаскивание заголовка — порядок колонок.");
+                    ui.label("Перетаскивание границы — ширина колонки.");
+                    ui.label("Вид → Колонки — выбор отображаемых полей.");
+                });
             });
         let mut open = self.settings_open;
         egui::Window::new("Подключение и настройки")
@@ -1027,6 +1054,7 @@ impl eframe::App for ClientApp {
                 download: self.torrents.iter().map(|t| t.dlspeed).sum(),
                 upload: self.torrents.iter().map(|t| t.upspeed).sum(),
                 free: self.server_free_space,
+                selected: self.selection.hashes.len(),
             },
         );
         egui::SidePanel::left("sidebar")
@@ -1038,21 +1066,9 @@ impl eframe::App for ClientApp {
                     .id_salt("navigation")
                     .show(ui, |ui| {
                         ui.add_space(8.0);
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 10.0;
-                            crate::icon::sidebar(ui);
-                            ui.vertical(|ui| {
-                                ui.spacing_mut().item_spacing.y = 1.0;
-                                ui.label(RichText::new("qBit Remote").size(18.0).strong());
-                                ui.label(
-                                    RichText::new("Удалённый клиент")
-                                        .size(11.0)
-                                        .color(palette.muted),
-                                );
-                            });
-                        });
+                        crate::icon::header(ui);
                         ui.add_space(12.0);
-                        ui.label(RichText::new("Сервер").size(12.0).color(palette.muted));
+                        ui.label(RichText::new("СЕРВЕР").size(10.0).color(palette.muted));
                         ui.add(
                             egui::Label::new(
                                 RichText::new(&self.settings.server_name).color(palette.accent),
@@ -1061,7 +1077,7 @@ impl eframe::App for ClientApp {
                         )
                         .on_hover_text("Переключение и управление — в меню «Серверы»");
                         ui.add_space(24.0);
-                        ui.label(RichText::new("Торренты").size(12.0).color(palette.muted));
+                        ui.label(RichText::new("ТОРРЕНТЫ").size(10.0).color(palette.muted));
                         for (index, label) in [
                             "Все торренты",
                             "Загрузка",
@@ -1111,14 +1127,6 @@ impl eframe::App for ClientApp {
                                 self.remote.page = page;
                             }
                         }
-                        ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
-                            ui.label(
-                                RichText::new(concat!("WINDOWS · ", env!("CARGO_PKG_VERSION")))
-                                    .size(10.0)
-                                    .color(palette.muted),
-                            );
-                            ui.add_space(8.0);
-                        });
                     });
             });
         if self.remote.page == crate::remote::Page::Torrents {
@@ -1127,10 +1135,15 @@ impl eframe::App for ClientApp {
                 .iter()
                 .find(|t| Some(&t.hash) == self.selected.as_ref())
             {
-                self.settings.details_height =
+                let (height, close) =
                     details_panel(ctx, self.settings.details_height, &t.name, |ui| {
                         self.remote.details(ui, t, &self.settings.path_mappings);
                     });
+                self.settings.details_height = height;
+                if close {
+                    self.selection.clear();
+                    self.selected = None;
+                }
             }
         }
         egui::CentralPanel::default()
@@ -1166,57 +1179,47 @@ impl eframe::App for ClientApp {
                         ][self.filter],
                     );
                     ui.label(RichText::new(self.torrents.len().to_string()).color(palette.muted));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .add_enabled(
-                                self.connected,
-                                action_button("+  Добавить торрент", palette.green),
-                            )
-                            .clicked()
-                        {
-                            self.add_open = true;
-                        }
-                    });
+
                 });
                 ui.add_space(8.0);
                 ui.horizontal_wrapped(|ui| {
-                    ui.add(
+                    ui.add_sized(egui::vec2(180.0, 32.0),
                         egui::TextEdit::singleline(&mut self.search)
                             .hint_text("Поиск торрентов…")
+                            .margin(egui::Margin::symmetric(8, 7))
                             .desired_width(180.0),
                     );
+                    if ui.add_enabled(self.connected, |ui: &mut egui::Ui| torrent_action_button(ui, "Добавить торрент", 3, Color32::from_rgb(30, 125, 205))).clicked() {
+                        self.add_open = true;
+                    }
                     let hashes = self.selected_hashes();
                     ui.add_enabled_ui(self.connected && !hashes.is_empty(), |ui| {
                         if ui
-                            .add(action_button("▶  Запустить", palette.green))
+                            .add(|ui: &mut egui::Ui| torrent_action_button(ui, "Запустить", 0, Color32::from_rgb(24, 164, 66)))
                             .clicked()
                         {
                             self.send(Command::Start(hashes.clone()));
                         }
                         if ui
-                            .add(action_button("II  Остановить", palette.orange))
+                            .add(|ui: &mut egui::Ui| torrent_action_button(ui, "Остановить", 1, Color32::from_rgb(184, 109, 18)))
                             .clicked()
                         {
                             self.send(Command::Stop(hashes.clone()));
                         }
-                        if ui.add(action_button("×  Удалить", palette.red)).clicked() {
+                        if ui.add(|ui: &mut egui::Ui| torrent_action_button(ui, "Удалить", 2, Color32::from_rgb(205, 47, 54))).clicked() {
                             self.prepare_delete();
                         }
+                        for (label, icon, up, color) in [
+                            ("Выше в очереди", 4, true, Color32::from_rgb(133, 76, 199)),
+                            ("Ниже в очереди", 5, false, Color32::from_rgb(136, 36, 66)),
+                        ] {
+                            if ui.add(|ui: &mut egui::Ui| torrent_action_button(ui, label, icon, color)).clicked() {
+                                self.remote.move_in_queue(&hashes, up);
+                            }
+                        }
                     });
-                    ui.label(format!(
-                        "Выбрано: {}",
-                        hashes.split('|').filter(|h| !h.is_empty()).count()
-                    ));
-                    if ui
-                        .add_enabled(self.connected, egui::Button::new("Обновить").frame(false))
-                        .clicked()
-                    {
-                        self.send(Command::Refresh);
-                    }
-                    if self.connected {
-                        ui.separator();
-                        ui.weak("Ctrl — несколько · Shift — диапазон · Ctrl+A — все");
-                    }
+
+
                 });
                 if !self.notice.is_empty() {
                     ui.horizontal_wrapped(|ui| {
@@ -1566,24 +1569,61 @@ fn details_panel(
     height: f32,
     name: &str,
     contents: impl FnOnce(&mut egui::Ui),
-) -> f32 {
-    egui::TopBottomPanel::bottom("details-stable")
+) -> (f32, bool) {
+    let mut close = false;
+    let panel = egui::TopBottomPanel::bottom("details-stable")
         .resizable(true)
         .default_height(height)
         .min_height(170.0)
         .max_height((ctx.available_rect().height() - 320.0).max(170.0))
         .show(ctx, |ui| {
             ui.set_min_height(ui.available_height());
-            ui.add(egui::Label::new(RichText::new(name).strong()).truncate())
-                .on_hover_text("Перетащите верхнюю границу, чтобы изменить высоту панели");
+            ui.horizontal(|ui| {
+                ui.allocate_ui_with_layout(
+                    egui::vec2((ui.available_width() - 30.0).max(0.0), 22.0),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.set_min_width(ui.available_width());
+                        ui.add(egui::Label::new(RichText::new(name).strong()).truncate())
+                            .on_hover_text(
+                                "Перетащите верхнюю границу, чтобы изменить высоту панели",
+                            );
+                    },
+                );
+                let response =
+                    ui.add_sized(egui::vec2(22.0, 22.0), egui::Button::new("").frame(false));
+                let center = response.rect.center();
+                let color = if response.hovered() {
+                    crate::theme::palette(ui.ctx()).text
+                } else {
+                    crate::theme::palette(ui.ctx()).muted
+                };
+                for sign in [-1.0, 1.0] {
+                    ui.painter().line_segment(
+                        [
+                            center + egui::vec2(-4.0, -4.0 * sign),
+                            center + egui::vec2(4.0, 4.0 * sign),
+                        ],
+                        egui::Stroke::new(1.5_f32, color),
+                    );
+                }
+                response.widget_info(|| {
+                    egui::WidgetInfo::labeled(
+                        egui::WidgetType::Button,
+                        true,
+                        "Скрыть панель информации",
+                    )
+                });
+                close = response
+                    .on_hover_text("Скрыть панель информации (Esc)")
+                    .clicked();
+            });
             egui::ScrollArea::both()
                 .id_salt("details-content")
                 .auto_shrink([false, false])
                 .show(ui, contents);
-        })
-        .response
-        .rect
-        .height()
+        });
+    (panel.response.rect.height(), close)
 }
 
 fn navigation_row(
@@ -1649,11 +1689,123 @@ fn navigation_row(
     response
 }
 
-fn action_button(label: &str, color: Color32) -> egui::Button<'_> {
-    egui::Button::new(RichText::new(label).color(color).strong())
-        .fill(color.gamma_multiply(0.16))
-        .stroke(egui::Stroke::new(1.0_f32, color.gamma_multiply(0.4)))
-        .min_size(egui::vec2(0.0, 24.0))
+fn pause_bars(center: egui::Pos2, pixels_per_point: f32) -> [egui::Rect; 2] {
+    let width = (3.0 * pixels_per_point).round().max(1.0);
+    let gap = (3.0 * pixels_per_point).round().max(1.0);
+    let height = (12.0 * pixels_per_point).round().max(1.0);
+    let left = (center.x * pixels_per_point - (2.0 * width + gap) / 2.0).round();
+    let top = (center.y * pixels_per_point - height / 2.0).round();
+    [0.0, width + gap].map(|offset| {
+        egui::Rect::from_min_size(
+            egui::pos2((left + offset) / pixels_per_point, top / pixels_per_point),
+            egui::vec2(width / pixels_per_point, height / pixels_per_point),
+        )
+    })
+}
+
+fn torrent_action_button(
+    ui: &mut egui::Ui,
+    label: &str,
+    icon: u8,
+    color: Color32,
+) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(32.0, 32.0), egui::Sense::click());
+    let enabled = ui.is_enabled();
+    let fill = if !enabled {
+        color.gamma_multiply(0.35)
+    } else if response.is_pointer_button_down_on() {
+        color.gamma_multiply(0.8)
+    } else if response.hovered() {
+        color.linear_multiply(1.12)
+    } else {
+        color
+    };
+    let painter = ui.painter();
+    painter.rect_filled(rect, 4.0, fill);
+    let center = rect.center();
+    let foreground = if enabled {
+        Color32::WHITE
+    } else {
+        Color32::from_gray(155)
+    };
+    let pixels_per_point = ui.ctx().pixels_per_point();
+    let snap = |p: egui::Pos2| {
+        egui::pos2(
+            (p.x * pixels_per_point).round() / pixels_per_point,
+            (p.y * pixels_per_point).round() / pixels_per_point,
+        )
+    };
+    match icon {
+        0 => {
+            painter.add(egui::Shape::convex_polygon(
+                vec![
+                    snap(center + egui::vec2(-4.0, -6.0)),
+                    snap(center + egui::vec2(-4.0, 6.0)),
+                    snap(center + egui::vec2(6.0, 0.0)),
+                ],
+                foreground,
+                egui::Stroke::NONE,
+            ));
+        }
+        1 => {
+            for bar in pause_bars(center, pixels_per_point) {
+                painter.rect_filled(bar, 0.0, foreground);
+            }
+        }
+        3 => {
+            let thickness = (2.0 * pixels_per_point).round().max(1.0);
+            let length = (12.0 * pixels_per_point).round().max(3.0);
+            for size in [egui::vec2(length, thickness), egui::vec2(thickness, length)] {
+                let min = egui::pos2(
+                    (center.x * pixels_per_point - size.x / 2.0).round() / pixels_per_point,
+                    (center.y * pixels_per_point - size.y / 2.0).round() / pixels_per_point,
+                );
+                painter.rect_filled(
+                    egui::Rect::from_min_size(min, size / pixels_per_point),
+                    0.0,
+                    foreground,
+                );
+            }
+        }
+        4 | 5 => {
+            let direction = if icon == 4 { -1.0 } else { 1.0 };
+            let stem_min = snap(center + egui::vec2(-1.0, -2.0));
+            let stem_max = snap(center + egui::vec2(1.0, 2.0));
+            let tail = snap(center + egui::vec2(0.0, -6.0 * direction));
+            painter.rect_filled(
+                egui::Rect::from_min_max(
+                    egui::pos2(stem_min.x, stem_min.y.min(tail.y)),
+                    egui::pos2(stem_max.x, stem_max.y.max(tail.y)),
+                ),
+                0.0,
+                foreground,
+            );
+            painter.add(egui::Shape::convex_polygon(
+                vec![
+                    snap(center + egui::vec2(0.0, 7.0 * direction)),
+                    snap(center + egui::vec2(-5.0, direction)),
+                    snap(center + egui::vec2(5.0, direction)),
+                ],
+                foreground,
+                egui::Stroke::NONE,
+            ));
+        }
+        _ => {
+            for sign in [-1.0, 1.0] {
+                painter.line_segment(
+                    [
+                        center + egui::vec2(-4.5, -4.5 * sign),
+                        center + egui::vec2(4.5, 4.5 * sign),
+                    ],
+                    egui::Stroke::new(2.0_f32, foreground),
+                );
+            }
+        }
+    }
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
+    response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(label)
 }
 
 fn torrent_color(t: &Torrent, palette: crate::theme::Palette) -> Color32 {
@@ -1845,16 +1997,39 @@ mod tests {
                 ..Default::default()
             };
             let _ = ctx.run(input, |ctx| {
-                let height = details_panel(ctx, 350.0, "Torrent", |ui| {
+                let (height, close) = details_panel(ctx, 350.0, "Torrent", |ui| {
                     for _ in 0..count {
                         ui.label("Information");
                     }
                 });
+                assert!(!close);
                 assert!(
                     (height - 350.0).abs() <= 1.0,
                     "height changed to {height} for {count} rows"
                 );
             });
+        }
+    }
+}
+
+#[cfg(test)]
+mod pause_icon_tests {
+    use super::*;
+    #[test]
+    fn pause_bars_have_identical_integer_pixel_bounds_at_fractional_scales() {
+        for scale in [1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0] {
+            for offset in [0.0, 0.2, 0.5, 0.75] {
+                let bars = pause_bars(egui::pos2(123.0 + offset, 51.0 + offset), scale);
+                assert!((bars[0].width() - bars[1].width()).abs() < 0.001);
+                assert_eq!(bars[0].top(), bars[1].top());
+                assert_eq!(bars[0].bottom(), bars[1].bottom());
+                assert!(bars[0].right() < bars[1].left());
+                for bar in bars {
+                    for edge in [bar.left(), bar.right(), bar.top(), bar.bottom()] {
+                        assert!((edge * scale - (edge * scale).round()).abs() < 0.001);
+                    }
+                }
+            }
         }
     }
 }

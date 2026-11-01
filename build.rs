@@ -5,6 +5,7 @@ use std::{env, fs, path::PathBuf, process::Command};
 
 fn main() {
     println!("cargo:rerun-if-changed=src/icon_pixels.rs");
+    println!("cargo:rerun-if-changed=assets/logo.rgba");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=RC");
     println!("cargo:rerun-if-env-changed=WindowsSdkDir");

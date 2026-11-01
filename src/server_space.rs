@@ -39,57 +39,13 @@ fn level(free: Option<u64>) -> Level {
         _ => Level::Normal,
     }
 }
-pub fn badge(
-    ui: &mut egui::Ui,
-    free: Option<u64>,
-    connected: bool,
-    compact: bool,
-) -> egui::Response {
-    let p = crate::theme::palette(ui.ctx());
-    let free = if connected { free } else { None };
-    let color = match level(free) {
-        Level::Unknown => p.muted,
-        Level::Normal => p.green,
-        Level::Low => p.orange,
-        Level::Critical => p.red,
-    };
-    let caption = if compact {
-        "Свободно"
-    } else {
-        "Свободно на сервере"
-    };
-    let value = free.map(crate::model::bytes).unwrap_or_else(|| "—".into());
-    let font = egui::FontId::proportional(12.0);
-    let label = ui
-        .painter()
-        .layout_no_wrap(caption.into(), font.clone(), p.muted);
-    let number = ui.painter().layout_no_wrap(value, font, color);
-    let width = (label.size().x + number.size().x + 43.0).min(ui.available_width());
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 22.0), egui::Sense::hover());
-    let painter = ui.painter().with_clip_rect(rect);
-    painter.rect_filled(rect, 5.0, color.gamma_multiply(0.10));
-    let disk = egui::Rect::from_center_size(
-        rect.left_center() + egui::vec2(13.0, 0.0),
-        egui::vec2(13.0, 11.0),
-    );
-    painter.rect_stroke(
-        disk,
-        2.0,
-        egui::Stroke::new(1.0_f32, color),
-        egui::StrokeKind::Inside,
-    );
-    painter.line_segment(
-        [
-            disk.left_bottom() + egui::vec2(2.0, -4.0),
-            disk.right_bottom() + egui::vec2(-2.0, -4.0),
-        ],
-        egui::Stroke::new(1.0_f32, color),
-    );
-    painter.circle_filled(disk.right_bottom() + egui::vec2(-3.0, -2.0), 0.8, color);
-    let pos = rect.left_center() + egui::vec2(26.0, -label.size().y / 2.0);
-    painter.galley(pos, label.clone(), p.muted);
-    painter.galley(pos + egui::vec2(label.size().x + 7.0, 0.0), number, color);
-    response.on_hover_text(if !connected{"Подключите сервер для получения свободного места."}else if free.is_none(){"Свободное место пока недоступно. Сервер не вернул значение или запрос не удался."}else{"Свободное место на диске папки загрузки по умолчанию удалённого qBittorrent. Обновляется каждые 3 секунды.\nОранжевый: меньше 10 ГиБ; красный: меньше 1 ГиБ.\nДругие папки загрузки могут находиться на других дисках."})
+pub fn color(free: Option<u64>, palette: &crate::theme::Palette) -> egui::Color32 {
+    match level(free) {
+        Level::Unknown => palette.muted,
+        Level::Normal => palette.text,
+        Level::Low => palette.orange,
+        Level::Critical => palette.red,
+    }
 }
 #[cfg(test)]
 mod tests {

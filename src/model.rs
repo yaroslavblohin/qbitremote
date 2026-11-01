@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    pub path_mappings: Vec<crate::path_mapping::PathMapping>,
     pub theme: crate::theme::Theme,
     pub visible_columns: Vec<String>,
     pub column_widths: std::collections::BTreeMap<String, f32>,
@@ -24,6 +25,8 @@ pub struct Settings {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ServerProfile {
+    #[serde(default)]
+    pub path_mappings: Vec<crate::path_mapping::PathMapping>,
     pub name: String,
     pub address: String,
     pub username: String,
@@ -35,6 +38,7 @@ impl Settings {
     pub fn save_server(&mut self) {
         self.profiles_initialized = true;
         let profile = ServerProfile {
+            path_mappings: self.path_mappings.clone(),
             name: self.server_name.clone(),
             address: self.address.clone(),
             username: self.username.clone(),
@@ -52,6 +56,7 @@ impl Settings {
     pub fn select_server(&mut self, index: usize) {
         if let Some(profile) = self.servers.get(index).cloned() {
             self.selected_server = index;
+            self.path_mappings = profile.path_mappings;
             self.server_name = profile.name;
             self.address = profile.address;
             self.username = profile.username;
@@ -70,6 +75,7 @@ pub struct SavedPassword {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            path_mappings: Vec::new(),
             theme: Default::default(),
             visible_columns: crate::columns::defaults(),
             column_widths: Default::default(),
@@ -155,6 +161,38 @@ pub fn bytes(value: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn path_mappings_survive_serialization_and_remain_per_server() {
+        let mut settings = Settings::default();
+        settings
+            .path_mappings
+            .push(crate::path_mapping::PathMapping {
+                server: "/downloads".into(),
+                local: "Z:\\Downloads".into(),
+            });
+        settings.save_server();
+        settings.selected_server = 1;
+        settings.server_name = "Второй".into();
+        settings.path_mappings.clear();
+        settings.save_server();
+        let encoded = ron::to_string(&settings).unwrap();
+        let mut decoded: Settings = ron::from_str(&encoded).unwrap();
+        decoded.select_server(0);
+        assert_eq!(decoded.path_mappings[0].local, "Z:\\Downloads");
+        decoded.path_mappings[0].local = "Y:\\".into();
+        decoded.save_server();
+        decoded.select_server(1);
+        assert!(decoded.path_mappings.is_empty());
+        decoded.select_server(0);
+        assert_eq!(decoded.path_mappings[0].local, "Y:\\");
+    }
+    #[test]
+    fn old_server_profile_loads_without_mappings() {
+        let profile: ServerProfile = ron::from_str(
+            "(name:\"Old\",address:\"http://host:8080\",username:\"admin\",remember_password:false,saved_password:None)"
+        ).unwrap();
+        assert!(profile.path_mappings.is_empty());
+    }
     #[test]
     fn stopped_states_across_api_versions() {
         for state in ["pausedDL", "pausedUP", "stoppedDL", "stoppedUP"] {

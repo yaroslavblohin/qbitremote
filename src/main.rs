@@ -9,6 +9,7 @@ mod columns;
 mod credentials;
 mod icon;
 mod model;
+mod path_mapping;
 mod remote;
 mod rss_rules;
 mod selection;
@@ -17,6 +18,7 @@ mod server_space;
 mod single_instance;
 #[cfg(feature = "ui-smoke")]
 mod smoke;
+mod status_bar;
 mod theme;
 #[cfg(windows)]
 mod tray;

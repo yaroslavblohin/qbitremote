@@ -1,6 +1,6 @@
 use crate::{
     api::{self, Command, Event},
-    model::{bytes, Settings, Torrent},
+    model::{Settings, Torrent},
 };
 use eframe::egui::{self, Color32, RichText};
 use egui_extras::{Column, TableBuilder};
@@ -62,6 +62,18 @@ impl ClientApp {
             _ => crate::theme::Theme::Graphite,
         };
         self.remote.smoke_fixture();
+        if std::env::var("QBIT_SMOKE_PAGE").as_deref() == Ok("path-mappings") {
+            self.settings.path_mappings = vec![
+                crate::path_mapping::PathMapping {
+                    server: "/downloads".into(),
+                    local: "Z:\\Downloads".into(),
+                },
+                crate::path_mapping::PathMapping {
+                    server: "/media".into(),
+                    local: "\\\\NAS\\Media".into(),
+                },
+            ];
+        }
         if std::env::var("QBIT_SMOKE_PAGE").as_deref() == Ok("add-torrent") {
             self.add_flow.smoke_fixture();
         }
@@ -527,6 +539,7 @@ impl ClientApp {
                         self.settings.username = "admin".into();
                         self.settings.remember_password = true;
                         self.settings.saved_password = None;
+                        self.settings.path_mappings.clear();
                         self.password.clear();
                         self.settings.save_server();
                     }
@@ -541,6 +554,7 @@ impl ClientApp {
                         self.settings.servers.remove(self.settings.selected_server);
                         if self.settings.servers.is_empty() {
                             self.settings.selected_server = 0;
+                            self.settings.path_mappings.clear();
                             self.settings.server_name = "Основной сервер".into();
                             self.settings.address = "http://localhost:8080".into();
                             self.settings.username = "admin".into();
@@ -609,6 +623,7 @@ impl ClientApp {
                     }
                 }
                 ui.small("Пароль защищён учётной записью Windows.");
+                crate::path_mapping::settings_ui(ui, &mut self.settings.path_mappings);
                 ui.checkbox(
                     &mut self.settings.auto_connect,
                     "Подключаться к выбранному серверу при запуске",
@@ -1002,42 +1017,18 @@ impl eframe::App for ClientApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
         }
         self.main_menu(ctx);
-        egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
-            let compact = ui.available_width() < 700.0;
-            ui.horizontal(|ui| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    crate::server_space::badge(ui, self.server_free_space, self.connected, compact);
-                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                        ui.colored_label(
-                            if self.connected {
-                                palette.accent
-                            } else {
-                                palette.muted
-                            },
-                            if self.connected {
-                                "● Подключено"
-                            } else if self.connecting {
-                                "◌ Подключение"
-                            } else {
-                                "○ Нет подключения"
-                            },
-                        );
-                        if self.connected && !compact {
-                            ui.small(format!("qBittorrent {}", self.version));
-                        }
-                        ui.separator();
-                        ui.label(format!(
-                            "↓ {}/с",
-                            bytes(self.torrents.iter().map(|t| t.dlspeed).sum())
-                        ));
-                        ui.label(format!(
-                            "↑ {}/с",
-                            bytes(self.torrents.iter().map(|t| t.upspeed).sum())
-                        ));
-                    });
-                });
-            });
-        });
+        crate::status_bar::show(
+            ctx,
+            &crate::status_bar::State {
+                connected: self.connected,
+                connecting: self.connecting,
+                server: &self.settings.server_name,
+                version: &self.version,
+                download: self.torrents.iter().map(|t| t.dlspeed).sum(),
+                upload: self.torrents.iter().map(|t| t.upspeed).sum(),
+                free: self.server_free_space,
+            },
+        );
         egui::SidePanel::left("sidebar")
             .exact_width(218.0)
             .resizable(false)
@@ -1132,7 +1123,7 @@ impl eframe::App for ClientApp {
             {
                 self.settings.details_height =
                     details_panel(ctx, self.settings.details_height, &t.name, |ui| {
-                        self.remote.details(ui, t);
+                        self.remote.details(ui, t, &self.settings.path_mappings);
                     });
             }
         }
@@ -1155,7 +1146,7 @@ impl eframe::App for ClientApp {
                     });
                 }
                 if self.connected && self.remote.page != crate::remote::Page::Torrents {
-                    self.remote.page_ui(ui);
+                    self.remote.page_ui(ui, &mut self.settings.path_mappings);
                     return;
                 }
                 ui.horizontal(|ui| {
@@ -1492,7 +1483,7 @@ impl eframe::App for ClientApp {
                                             ui.close_menu();
                                         }
 
-                                        self.remote.torrent_actions(ui, t, &hashes, count);
+                                        self.remote.torrent_actions(ui, t, &hashes, count, &self.settings.path_mappings);
 
                                         });
                                     });
@@ -1748,6 +1739,23 @@ pub(crate) fn draw_icon(p: &egui::Painter, center: egui::Pos2, kind: usize, colo
                 line((-7.0, y), (7.0, y));
                 p.circle_filled(point(x, y), 2.5, color);
             }
+        }
+        11 => {
+            line((-7.0, -5.0), (-2.0, -5.0));
+            line((-2.0, -5.0), (0.0, -2.0));
+            line((0.0, -2.0), (7.0, -2.0));
+            line((7.0, -2.0), (7.0, 6.0));
+            line((7.0, 6.0), (-7.0, 6.0));
+            line((-7.0, 6.0), (-7.0, -5.0));
+        }
+        12 => {
+            line((-5.0, -7.0), (2.0, -7.0));
+            line((2.0, -7.0), (6.0, -3.0));
+            line((6.0, -3.0), (6.0, 7.0));
+            line((6.0, 7.0), (-5.0, 7.0));
+            line((-5.0, 7.0), (-5.0, -7.0));
+            line((2.0, -7.0), (2.0, -3.0));
+            line((2.0, -3.0), (6.0, -3.0));
         }
         _ => {
             line((-6.0, -5.0), (3.0, -5.0));

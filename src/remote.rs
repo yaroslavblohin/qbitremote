@@ -135,6 +135,7 @@ pub struct Remote {
     serial: u64,
     queue: Vec<Command>,
     form: Option<Form>,
+    open_result: Option<std::sync::mpsc::Receiver<Result<Option<std::path::PathBuf>, String>>>,
     pub message: String,
     pub error: bool,
     selected_hash: String,
@@ -166,6 +167,7 @@ impl Default for Remote {
             serial: 0,
             queue: vec![],
             form: None,
+            open_result: None,
             message: String::new(),
             error: false,
             selected_hash: String::new(),
@@ -198,7 +200,7 @@ impl Remote {
         }
         self.page = match std::env::var("QBIT_SMOKE_PAGE").as_deref() {
             Ok("speed") => Page::Speed,
-            Ok("settings") => Page::Preferences,
+            Ok("settings" | "path-mappings") => Page::Preferences,
             Ok("rss-import") => Page::Rss,
             _ => Page::Torrents,
         };
@@ -402,6 +404,36 @@ impl Remote {
         });
     }
     pub fn dialogs(&mut self, ctx: &egui::Context, connected: bool) {
+        if let Some(receiver) = &self.open_result {
+            match receiver.try_recv() {
+                Ok(result) => {
+                    match result {
+                        Ok(path) => {
+                            self.message = path
+                                .map(|path| format!("Открыто: {}", path.display()))
+                                .unwrap_or_else(|| "Открытие файла отменено".into());
+                            self.error = false;
+                        }
+                        Err(error) => {
+                            self.message = error;
+                            self.error = true;
+                        }
+                    }
+                    self.open_result = None;
+                    ctx.request_repaint();
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    ctx.request_repaint_after(Duration::from_millis(100))
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.open_result = None;
+                    self.message = "Обработчик открытия завершился без результата".into();
+                    self.error = true;
+                    ctx.request_repaint();
+                }
+            }
+        }
+
         self.rss_import_dialog(ctx, connected);
         let Some(mut form) = self.form.take() else {
             return;
@@ -472,7 +504,12 @@ impl Remote {
             self.form = Some(form);
         }
     }
-    pub fn details(&mut self, ui: &mut egui::Ui, torrent: &Torrent) {
+    pub fn details(
+        &mut self,
+        ui: &mut egui::Ui,
+        torrent: &Torrent,
+        mappings: &[crate::path_mapping::PathMapping],
+    ) {
         let hash = &torrent.hash;
         if self.selected_hash != *hash {
             self.selected_hash = hash.clone();
@@ -543,7 +580,7 @@ impl Remote {
             1 => self.trackers(ui, hash, &data),
             2 => self.peers(ui, hash, &data),
             3 => self.webseeds(ui, hash, &data),
-            4 => self.files(ui, hash, &data),
+            4 => self.files(ui, torrent, &data, mappings),
             5 => {
                 ui.label("Серый — отсутствует, синий — загружается, светлый — готов");
                 let pieces = data.as_array().cloned().unwrap_or_default();
@@ -625,7 +662,33 @@ impl Remote {
             );
         }
     }
-    pub fn torrent_actions(&mut self, ui: &mut egui::Ui, t: &Torrent, hashes: &str, count: usize) {
+    fn torrent_open_menu(
+        &mut self,
+        ui: &mut egui::Ui,
+        torrent: &Torrent,
+        count: usize,
+        mappings: &[crate::path_mapping::PathMapping],
+    ) {
+        menu_group(ui, "Локальные файлы");
+        ui.add_enabled_ui(count == 1, |ui| {
+            for (label, mode, icon) in [("Открыть папку", crate::path_mapping::OpenMode::Folder, 11), ("Открыть файл", crate::path_mapping::OpenMode::File, 12)] {
+                if action_menu_item(ui, label, icon, false).on_hover_text("Через сопоставление папок выбранного сервера. Для нескольких файлов — выбор файла в папке торрента.").clicked() {
+                    let path = crate::path_mapping::torrent_path(mappings, torrent);
+                    self.start_open(path, mode);
+                    ui.close_menu();
+                }
+            }
+        }).response.on_disabled_hover_text("Выберите один торрент для открытия файлов или папки");
+    }
+    pub fn torrent_actions(
+        &mut self,
+        ui: &mut egui::Ui,
+        t: &Torrent,
+        hashes: &str,
+        count: usize,
+        mappings: &[crate::path_mapping::PathMapping],
+    ) {
+        self.torrent_open_menu(ui, t, count, mappings);
         menu_group(ui, "Проверка и трекеры");
         for (label, method) in [
             ("Перепроверить", "recheck"),
@@ -1002,7 +1065,65 @@ impl Remote {
             });
         }
     }
-    fn files(&mut self, ui: &mut egui::Ui, hash: &str, data: &Value) {
+    fn open_mapped(
+        &mut self,
+        mappings: &[crate::path_mapping::PathMapping],
+        save_path: &str,
+        relative: &str,
+        parent: bool,
+    ) {
+        let path = crate::path_mapping::resolve(mappings, save_path, relative).and_then(|path| {
+            if parent {
+                path.parent()
+                    .map(std::path::Path::to_owned)
+                    .ok_or_else(|| "У пути нет родительской папки".into())
+            } else {
+                Ok(path)
+            }
+        });
+        self.start_open(path, crate::path_mapping::OpenMode::Exact);
+    }
+    fn start_open(
+        &mut self,
+        path: Result<std::path::PathBuf, String>,
+        mode: crate::path_mapping::OpenMode,
+    ) {
+        if self.open_result.is_some() {
+            return;
+        }
+        match path {
+            Ok(path) => {
+                self.message = format!("Открытие: {}", path.display());
+                self.error = false;
+                let (sender, receiver) = std::sync::mpsc::channel();
+                self.open_result = Some(receiver);
+                std::thread::spawn(move || {
+                    let result = crate::path_mapping::open_target(path, mode);
+                    let _ = sender.send(result);
+                });
+            }
+            Err(error) => {
+                self.message = error;
+                self.error = true;
+            }
+        }
+    }
+
+    fn files(
+        &mut self,
+        ui: &mut egui::Ui,
+        torrent: &Torrent,
+        data: &Value,
+        mappings: &[crate::path_mapping::PathMapping],
+    ) {
+        let hash = &torrent.hash;
+        if ui
+            .button("Открыть папку загрузки")
+            .on_hover_text("Через сопоставление путей выбранного сервера")
+            .clicked()
+        {
+            self.open_mapped(mappings, &torrent.save_path, "", false);
+        }
         ui.horizontal_wrapped(|ui| {
             ui.add(
                 egui::TextEdit::singleline(&mut self.file_filter)
@@ -1027,7 +1148,7 @@ impl Remote {
         });
         let rows = file_tree::rows(data, &self.file_filter, &self.collapsed_folders);
         let searching = !self.file_filter.trim().is_empty();
-        let (toggled, rename) = file_tree_table(ui, hash, &rows, searching, |ui, row| {
+        let (toggled, rename, open) = file_tree_table(ui, hash, &rows, searching, |ui, row| {
             if row["__folder"].as_bool() == Some(true) {
                 return;
             }
@@ -1068,6 +1189,9 @@ impl Remote {
                 );
             }
         });
+        if let Some((path, parent)) = open {
+            self.open_mapped(mappings, &torrent.save_path, &path, parent);
+        }
         if let Some(path) = toggled {
             if !self.collapsed_folders.remove(&path) {
                 self.collapsed_folders.insert(path);
@@ -1088,22 +1212,58 @@ impl Remote {
     }
 }
 
+fn file_context_menu(
+    ui: &mut egui::Ui,
+    file: &Value,
+    rename: &mut Option<String>,
+    open: &mut Option<(String, bool)>,
+) {
+    let folder = file["__folder"].as_bool() == Some(true);
+    if action_menu_item(
+        ui,
+        if folder {
+            "Открыть папку"
+        } else {
+            "Открыть файл"
+        },
+        if folder { 11 } else { 12 },
+        false,
+    )
+    .clicked()
+    {
+        *open = Some((text(file, "__path"), false));
+        ui.close_menu();
+    }
+    if action_menu_item(ui, "Открыть содержащую папку", 11, false).clicked() {
+        *open = Some((text(file, "__path"), true));
+        ui.close_menu();
+    }
+    if folder && action_menu_item(ui, "Переименовать папку…", 10, false).clicked()
+    {
+        *rename = Some(text(file, "__path"));
+        ui.close_menu();
+    }
+}
+
+type FileTreeResult = (Option<String>, Option<String>, Option<(String, bool)>);
+
 fn file_tree_table(
     ui: &mut egui::Ui,
     hash: &str,
     rows: &[Value],
     searching: bool,
     mut action: impl FnMut(&mut egui::Ui, &Value),
-) -> (Option<String>, Option<String>) {
+) -> FileTreeResult {
     let mut toggled = None;
     let mut rename = None;
+    let mut open = None;
     if rows.is_empty() {
         ui.label(if searching {
             "Файлы не найдены"
         } else {
             "Нет файлов · метаданные ещё не получены"
         });
-        return (None, None);
+        return (None, None, None);
     }
     let width = ui.available_width().max(850.0);
     egui::ScrollArea::horizontal()
@@ -1176,20 +1336,30 @@ fn file_tree_table(
                                         text(file, "__path")
                                     });
                                 if response.double_clicked() {
-                                    rename = Some(text(file, "__path"));
+                                    open = Some((text(file, "__path"), false));
                                 }
                                 response.context_menu(|ui| {
-                                    if action_menu_item(ui, "Переименовать папку…", 10, false)
-                                        .clicked()
-                                    {
-                                        rename = Some(text(file, "__path"));
-                                        ui.close_menu();
-                                    }
+                                    file_context_menu(ui, file, &mut rename, &mut open)
                                 });
                             } else {
                                 ui.add_space(18.0);
-                                ui.add(egui::Label::new(text(file, "name")).truncate())
-                                    .on_hover_text(text(file, "__path"));
+                                let response = ui
+                                    .add(
+                                        egui::Label::new(text(file, "name"))
+                                            .truncate()
+                                            .selectable(false)
+                                            .sense(egui::Sense::click()),
+                                    )
+                                    .on_hover_text(format!(
+                                        "{}\nДвойной щелчок — открыть файл",
+                                        text(file, "__path")
+                                    ));
+                                if response.double_clicked() {
+                                    open = Some((text(file, "__path"), false));
+                                }
+                                response.context_menu(|ui| {
+                                    file_context_menu(ui, file, &mut rename, &mut open)
+                                });
                             }
                         });
                         row.col(|ui| {
@@ -1204,19 +1374,12 @@ fn file_tree_table(
                         row.col(|ui| {
                             ui.horizontal(|ui| action(ui, file));
                         });
-                        if folder {
-                            row.response().context_menu(|ui| {
-                                if action_menu_item(ui, "Переименовать папку…", 10, false).clicked()
-                                {
-                                    rename = Some(text(file, "__path"));
-                                    ui.close_menu();
-                                }
-                            });
-                        }
+                        row.response()
+                            .context_menu(|ui| file_context_menu(ui, file, &mut rename, &mut open));
                     });
                 });
         });
-    (toggled, rename)
+    (toggled, rename, open)
 }
 
 fn peer_address(ip: &str, port: i64) -> String {
@@ -1497,9 +1660,119 @@ fn label(key: &str) -> &str {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn folder_double_click_and_context_menu_target_the_folder() {
+    fn torrent_context_menu_exposes_open_commands_and_disables_them_for_groups() {
         use super::*;
-        for context_menu in [false, true] {
+        for count in [1, 2] {
+            for label in ["Открыть папку", "Открыть файл"] {
+                let ctx = egui::Context::default();
+                let mut remote = Remote::default();
+                let torrent = Torrent {
+                    save_path: "/downloads".into(),
+                    ..Default::default()
+                };
+                let mut target = egui::Pos2::ZERO;
+                for frame in 0..3 {
+                    let mut input = egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(600.0, 300.0),
+                        )),
+                        ..Default::default()
+                    };
+                    if frame > 0 {
+                        input.events = vec![
+                            egui::Event::PointerMoved(target),
+                            egui::Event::PointerButton {
+                                pos: target,
+                                button: egui::PointerButton::Primary,
+                                pressed: frame == 1,
+                                modifiers: egui::Modifiers::NONE,
+                            },
+                        ];
+                    }
+                    let output = ctx.run(input, |ctx| {
+                        egui::CentralPanel::default()
+                            .show(ctx, |ui| remote.torrent_open_menu(ui, &torrent, count, &[]));
+                    });
+                    if frame == 0 {
+                        target = output
+                            .shapes
+                            .iter()
+                            .find_map(|shape| {
+                                if let egui::Shape::Text(text) = &shape.shape {
+                                    if text.galley.text() == label {
+                                        return Some(text.pos + egui::vec2(4.0, 4.0));
+                                    }
+                                }
+                                None
+                            })
+                            .expect("Open command must be visible");
+                    }
+                }
+                if count == 1 {
+                    assert!(remote.error && remote.message.contains("сопоставления"));
+                } else {
+                    assert!(remote.message.is_empty());
+                }
+                assert!(
+                    remote.commands().is_empty(),
+                    "Opening must not mutate the server"
+                );
+                assert!(
+                    remote.open_result.is_none(),
+                    "Missing mapping must not launch anything"
+                );
+            }
+        }
+    }
+    #[test]
+    fn file_tree_double_click_and_context_commands_target_correct_paths() {
+        use super::*;
+        for (context_menu, row_label, command, expected_rename, expected_open) in [
+            (false, "Folder  (1)", "", None, Some(("Folder", false))),
+            (
+                true,
+                "Folder  (1)",
+                "Переименовать папку…",
+                Some("Folder"),
+                None,
+            ),
+            (
+                true,
+                "Folder  (1)",
+                "Открыть папку",
+                None,
+                Some(("Folder", false)),
+            ),
+            (
+                true,
+                "Folder  (1)",
+                "Открыть содержащую папку",
+                None,
+                Some(("Folder", true)),
+            ),
+            (
+                false,
+                "file.txt",
+                "",
+                None,
+                Some(("Folder/file.txt", false)),
+            ),
+            (
+                true,
+                "file.txt",
+                "Открыть файл",
+                None,
+                Some(("Folder/file.txt", false)),
+            ),
+            (
+                true,
+                "file.txt",
+                "Открыть содержащую папку",
+                None,
+                Some(("Folder/file.txt", true)),
+            ),
+        ] {
             let ctx = egui::Context::default();
             let rows = file_tree::rows(
                 &json!([{"name":"Folder/file.txt", "index":0, "size":10}]),
@@ -1508,6 +1781,7 @@ mod tests {
             );
             let mut target = egui::Pos2::ZERO;
             let mut renamed = None;
+            let mut opened = None;
             for frame in 0..6 {
                 let mut input = egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(
@@ -1538,20 +1812,19 @@ mod tests {
                 }
                 let output = ctx.run(input, |ctx| {
                     egui::CentralPanel::default().show(ctx, |ui| {
-                        let (toggle, rename) =
+                        let (toggle, rename, open) =
                             file_tree_table(ui, "test-hash", &rows, false, |_, _| {});
                         assert!(toggle.is_none(), "Renaming must not collapse the folder");
                         if rename.is_some() {
                             renamed = rename;
                         }
+                        if open.is_some() {
+                            opened = open;
+                        }
                     });
                 });
                 if frame == 0 || (context_menu && frame == 3) {
-                    let label = if frame == 0 {
-                        "Folder  (1)"
-                    } else {
-                        "Переименовать папку…"
-                    };
+                    let label = if frame == 0 { row_label } else { command };
                     target = output
                         .shapes
                         .iter()
@@ -1568,7 +1841,16 @@ mod tests {
                         });
                 }
             }
-            assert_eq!(renamed.as_deref(), Some("Folder"));
+            assert_eq!(
+                renamed.as_deref(),
+                expected_rename,
+                "{row_label}: {command}"
+            );
+            assert_eq!(
+                opened.as_ref().map(|(p, parent)| (p.as_str(), *parent)),
+                expected_open,
+                "{row_label}: {command}"
+            );
         }
     }
     use super::*;

@@ -55,7 +55,11 @@ impl Remote {
             self.rss_import = Some((rules, replace));
         }
     }
-    pub fn page_ui(&mut self, ui: &mut egui::Ui) {
+    pub fn page_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        mappings: &mut Vec<crate::path_mapping::PathMapping>,
+    ) {
         ui.heading(PAGES.iter().find(|(p, _)| *p == self.page).unwrap().1);
         ui.separator();
         match self.page {
@@ -63,7 +67,10 @@ impl Remote {
             Page::Search => self.search_page(ui),
             Page::Rss => self.rss_page(ui),
             Page::Log => self.log_page(ui),
-            Page::Preferences => self.preferences_page(ui),
+            Page::Preferences => {
+                crate::path_mapping::settings_ui(ui, mappings);
+                self.preferences_page(ui);
+            }
             Page::Categories => self.categories_page(ui),
             Page::Torrents => {}
         }

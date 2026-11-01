@@ -31,7 +31,6 @@ pub struct Palette {
     pub border: Color32,
     pub selection: Color32,
     pub badge: Color32,
-    pub logo: Color32,
 }
 
 impl Theme {
@@ -68,7 +67,6 @@ impl Theme {
                 border: c(202, 207, 214),
                 selection: c(207, 222, 237),
                 badge: c(214, 220, 228),
-                logo: c(240, 242, 245),
             },
             Self::Marine => Palette {
                 muted: c(146, 163, 184),
@@ -90,7 +88,6 @@ impl Theme {
                 border: c(44, 59, 77),
                 selection: c(32, 68, 83),
                 badge: c(40, 54, 71),
-                logo: c(13, 43, 48),
             },
             Self::Graphite => Palette {
                 muted: c(160, 160, 166),
@@ -112,7 +109,6 @@ impl Theme {
                 border: c(59, 59, 64),
                 selection: c(63, 66, 73),
                 badge: c(46, 46, 50),
-                logo: c(32, 33, 36),
             },
         }
     }

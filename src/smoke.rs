@@ -106,24 +106,37 @@ impl SmokeApp {
 }
 impl App for SmokeApp {
     fn raw_input_hook(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
-        if std::env::var("QBIT_SMOKE_PAGE").as_deref() != Ok("actions")
-            || self.context_click_stage >= 2
-        {
+        let page = std::env::var("QBIT_SMOKE_PAGE").unwrap_or_default();
+        if !matches!(page.as_str(), "actions" | "actions-bottom") {
             return;
         }
         if let Some(pos) =
             ctx.data(|data| data.get_temp::<egui::Pos2>(egui::Id::new("smoke-torrent-row")))
         {
-            input.events.push(egui::Event::PointerMoved(pos));
-            input.events.push(egui::Event::PointerButton {
-                pos,
-                button: egui::PointerButton::Secondary,
-                pressed: self.context_click_stage == 0,
-                modifiers: egui::Modifiers::NONE,
-            });
+            if self.context_click_stage < 2 {
+                input.events.push(egui::Event::PointerMoved(pos));
+                input.events.push(egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Secondary,
+                    pressed: self.context_click_stage == 0,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            } else if page == "actions-bottom" && self.context_click_stage == 2 {
+                input
+                    .events
+                    .push(egui::Event::PointerMoved(pos + egui::vec2(40.0, 100.0)));
+                input.events.push(egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: egui::vec2(0.0, -850.0),
+                    modifiers: egui::Modifiers::NONE,
+                });
+            } else {
+                return;
+            }
             self.context_click_stage += 1;
         }
     }
+
     fn save(&mut self, _storage: &mut dyn eframe::Storage) {
         // Verify eframe invokes normal persistence, without changing user settings.
         if self.lifecycle.is_some() {

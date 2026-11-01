@@ -1039,11 +1039,17 @@ impl eframe::App for ClientApp {
                     .show(ui, |ui| {
                         ui.add_space(8.0);
                         ui.horizontal(|ui| {
-                            let (r, _) = ui
-                                .allocate_exact_size(egui::vec2(30.0, 30.0), egui::Sense::hover());
-                            ui.painter().rect_filled(r, 9.0, palette.accent);
-                            draw_icon(ui.painter(), r.center(), 1, palette.logo);
-                            ui.label(RichText::new("qBit Remote").size(20.0).strong());
+                            ui.spacing_mut().item_spacing.x = 10.0;
+                            crate::icon::sidebar(ui);
+                            ui.vertical(|ui| {
+                                ui.spacing_mut().item_spacing.y = 1.0;
+                                ui.label(RichText::new("qBit Remote").size(18.0).strong());
+                                ui.label(
+                                    RichText::new("Удалённый клиент")
+                                        .size(11.0)
+                                        .color(palette.muted),
+                                );
+                            });
                         });
                         ui.add_space(12.0);
                         ui.label(RichText::new("Сервер").size(12.0).color(palette.muted));
@@ -1164,7 +1170,7 @@ impl eframe::App for ClientApp {
                         if ui
                             .add_enabled(
                                 self.connected,
-                                action_button("+  Добавить торрент", palette.accent),
+                                action_button("+  Добавить торрент", palette.green),
                             )
                             .clicked()
                         {
@@ -1409,7 +1415,7 @@ impl eframe::App for ClientApp {
                                                 let color = match c.key {
                                                     "state" => torrent_color(t, palette),
                                                     "dlspeed" if t.dlspeed > 0 => palette.blue,
-                                                    "upspeed" if t.upspeed > 0 => palette.orange,
+                                                    "upspeed" if t.upspeed > 0 => palette.green,
                                                     _ => ui.visuals().text_color(),
                                                 };
                                                 let text = c.display(t);
@@ -1460,7 +1466,7 @@ impl eframe::App for ClientApp {
                                             .join("|");
                                         let count = self.selection.hashes.len();
                                         ui.weak(format!("Выбрано: {count}"));
-                                        if crate::remote::action_menu_item(ui,"Запустить",2,false).clicked() {
+                                        if crate::remote::action_menu_item(ui,"Запустить",crate::ui_icons::PLAY,false).clicked() {
                                             let _ = self.tx.send(Command::Start(hashes.clone()));
                                             ui.close_menu();
                                         }
@@ -1588,19 +1594,7 @@ fn navigation_row(
     selected: bool,
 ) -> egui::Response {
     let palette = crate::theme::palette(ui.ctx());
-    let color = [
-        palette.accent,
-        palette.blue,
-        palette.orange,
-        palette.muted,
-        palette.red,
-        palette.blue,
-        palette.accent,
-        palette.orange,
-        palette.muted,
-        palette.blue,
-        palette.accent,
-    ][icon.min(10)];
+    let color = crate::ui_icons::color(icon, palette);
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), 18.0), egui::Sense::click());
     if selected || response.hovered() {
@@ -1624,7 +1618,11 @@ fn navigation_row(
     draw_icon(
         ui.painter(),
         rect.left_center() + egui::vec2(18.0, 0.0),
-        icon,
+        if icon == 4 {
+            crate::ui_icons::ERROR
+        } else {
+            icon
+        },
         color,
     );
     ui.painter().text(
@@ -1666,105 +1664,14 @@ fn torrent_color(t: &Torrent, palette: crate::theme::Palette) -> Color32 {
     } else if t.state.contains("checking") {
         palette.purple
     } else if t.progress >= 1.0 {
-        if t.upspeed > 0 {
-            palette.orange
-        } else {
-            palette.green
-        }
+        palette.green
     } else {
         palette.blue
     }
 }
 
 pub(crate) fn draw_icon(p: &egui::Painter, center: egui::Pos2, kind: usize, color: Color32) {
-    let point = |x, y| center + egui::vec2(x, y);
-    let stroke = egui::Stroke::new(1.8_f32, color);
-    let line = |a: (f32, f32), b: (f32, f32)| {
-        p.line_segment([point(a.0, a.1), point(b.0, b.1)], stroke);
-    };
-    match kind {
-        0 => {
-            for x in [-6.0, 2.0] {
-                for y in [-6.0, 2.0] {
-                    p.rect_filled(
-                        egui::Rect::from_min_size(point(x, y), egui::vec2(5.0, 5.0)),
-                        1.0,
-                        color,
-                    );
-                }
-            }
-        }
-        1 | 2 => {
-            let d = if kind == 1 { 1.0 } else { -1.0 };
-            line((0.0, -7.0 * d), (0.0, 6.0 * d));
-            line((-5.0, 1.0 * d), (0.0, 6.0 * d));
-            line((5.0, 1.0 * d), (0.0, 6.0 * d));
-        }
-        3 => {
-            for x in [-5.0, 2.0] {
-                p.rect_filled(
-                    egui::Rect::from_min_size(point(x, -6.0), egui::vec2(3.0, 12.0)),
-                    1.0,
-                    color,
-                );
-            }
-        }
-        4 => {
-            line((-5.0, -5.0), (5.0, 5.0));
-            line((-5.0, 5.0), (5.0, -5.0));
-        }
-        5 => {
-            line((-7.0, 5.0), (-3.0, -1.0));
-            line((-3.0, -1.0), (1.0, 3.0));
-            line((1.0, 3.0), (7.0, -6.0));
-        }
-        6 => {
-            p.circle_stroke(point(-2.0, -2.0), 5.0, stroke);
-            line((2.0, 2.0), (7.0, 7.0));
-        }
-        7 => {
-            p.circle_filled(point(-5.0, 5.0), 2.0, color);
-            line((-5.0, -5.0), (5.0, -5.0));
-            line((5.0, -5.0), (5.0, 5.0));
-            line((-5.0, 0.0), (0.0, 0.0));
-            line((0.0, 0.0), (0.0, 5.0));
-        }
-        8 => {
-            for y in [-5.0, 0.0, 5.0] {
-                line((-6.0, y), (6.0, y));
-            }
-        }
-        9 => {
-            for (y, x) in [(-5.0, -2.0), (1.0, 4.0), (6.0, -3.0)] {
-                line((-7.0, y), (7.0, y));
-                p.circle_filled(point(x, y), 2.5, color);
-            }
-        }
-        11 => {
-            line((-7.0, -5.0), (-2.0, -5.0));
-            line((-2.0, -5.0), (0.0, -2.0));
-            line((0.0, -2.0), (7.0, -2.0));
-            line((7.0, -2.0), (7.0, 6.0));
-            line((7.0, 6.0), (-7.0, 6.0));
-            line((-7.0, 6.0), (-7.0, -5.0));
-        }
-        12 => {
-            line((-5.0, -7.0), (2.0, -7.0));
-            line((2.0, -7.0), (6.0, -3.0));
-            line((6.0, -3.0), (6.0, 7.0));
-            line((6.0, 7.0), (-5.0, 7.0));
-            line((-5.0, 7.0), (-5.0, -7.0));
-            line((2.0, -7.0), (2.0, -3.0));
-            line((2.0, -3.0), (6.0, -3.0));
-        }
-        _ => {
-            line((-6.0, -5.0), (3.0, -5.0));
-            line((3.0, -5.0), (7.0, 0.0));
-            line((7.0, 0.0), (0.0, 7.0));
-            line((0.0, 7.0), (-6.0, 1.0));
-            line((-6.0, 1.0), (-6.0, -5.0));
-        }
-    }
+    crate::ui_icons::draw(p, center, kind, color);
 }
 
 fn torrent_progress(ui: &mut egui::Ui, torrent: &Torrent) {

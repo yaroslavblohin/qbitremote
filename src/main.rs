@@ -7,6 +7,7 @@ mod app;
 mod columns;
 #[cfg(windows)]
 mod credentials;
+mod file_icons;
 mod icon;
 mod model;
 mod path_mapping;
@@ -22,8 +23,14 @@ mod status_bar;
 mod theme;
 #[cfg(windows)]
 mod tray;
+mod ui_icons;
 
 fn main() -> eframe::Result {
+    #[cfg(feature = "ui-smoke")]
+    if std::env::var_os("QBIT_EXPORT_BRANDING").is_some() {
+        icon::export_branding();
+        return Ok(());
+    }
     let launch_files = match activation::files(std::env::args_os().skip(1)) {
         Ok(files) => files,
         Err(error) => {

@@ -195,8 +195,14 @@ impl Remote {
     }
     #[cfg(feature = "ui-smoke")]
     pub fn smoke_fixture(&mut self) {
-        if std::env::var("QBIT_SMOKE_PAGE").as_deref() == Ok("files") {
-            self.tab = 4;
+        self.tab = match std::env::var("QBIT_SMOKE_PAGE").as_deref() {
+            Ok("files") => 4,
+            Ok("pieces") => 5,
+            Ok("torrent-graph") => 6,
+            _ => 0,
+        };
+        if self.tab == 6 {
+            self.selected_hash = "fixture-1".into();
         }
         self.page = match std::env::var("QBIT_SMOKE_PAGE").as_deref() {
             Ok("speed") => Page::Speed,
@@ -224,9 +230,21 @@ impl Remote {
                 json!([
                     {"name":"Linux/Images/ubuntu.iso", "index":0, "size":6000000000_u64, "progress":0.64, "priority":1, "availability":1.2},
                     {"name":"Linux/Docs/install.txt", "index":1, "size":12000, "progress":1.0, "priority":1, "availability":2.0},
-                    {"name":"Linux/Docs/license.txt", "index":2, "size":4000, "progress":1.0, "priority":0, "availability":2.0},
-                    {"name":"readme.txt", "index":3, "size":8000, "progress":1.0, "priority":1, "availability":1.0}
+                    {"name":"Linux/Docs/cover.png", "index":2, "size":4000, "progress":1.0, "priority":0, "availability":2.0},
+                    {"name":"examples.zip", "index":3, "size":8000, "progress":1.0, "priority":1, "availability":1.0}
                 ]),
+            ),
+            (
+                "pieceStates/fixture-1",
+                json!((0..600)
+                    .map(|i| if i < 380 {
+                        2
+                    } else if i < 430 {
+                        1
+                    } else {
+                        0
+                    })
+                    .collect::<Vec<_>>()),
             ),
             (
                 "properties/fixture-1",
@@ -256,6 +274,13 @@ impl Remote {
             }
         }
         for i in 0..60 {
+            if self.tab == 6 {
+                push_history(
+                    &mut self.torrent_history,
+                    8_000_000.0 + (i as f32 * 0.3).sin() * 3_000_000.0,
+                    2_000_000.0,
+                );
+            }
             push_history(
                 &mut self.history,
                 8_000_000.0 + (i as f32 * 0.3).sin() * 3_000_000.0,
@@ -408,12 +433,7 @@ impl Remote {
             match receiver.try_recv() {
                 Ok(result) => {
                     match result {
-                        Ok(path) => {
-                            self.message = path
-                                .map(|path| format!("Открыто: {}", path.display()))
-                                .unwrap_or_else(|| "Открытие файла отменено".into());
-                            self.error = false;
-                        }
+                        Ok(_) => {} // Opening/canceling is silent; preserve unrelated notices.
                         Err(error) => {
                             self.message = error;
                             self.error = true;
@@ -518,19 +538,16 @@ impl Remote {
             self.torrent_history.clear();
         }
         ui.horizontal_wrapped(|ui| {
-            for (i, name) in [
-                "Общее",
-                "Трекеры",
-                "Пиры",
-                "HTTP-источники",
-                "Файлы",
-                "Части",
-                "График",
-            ]
-            .iter()
-            .enumerate()
-            {
-                ui.selectable_value(&mut self.tab, i, *name);
+            for (id, name) in [
+                (0, "Общее"),
+                (4, "Файлы"),
+                (5, "Части"),
+                (2, "Пиры"),
+                (1, "Трекеры"),
+                (6, "График"),
+                (3, "HTTP-источники"),
+            ] {
+                ui.selectable_value(&mut self.tab, id, name);
             }
         });
         ui.separator();
@@ -582,7 +599,7 @@ impl Remote {
             3 => self.webseeds(ui, hash, &data),
             4 => self.files(ui, torrent, &data, mappings),
             5 => {
-                ui.label("Серый — отсутствует, синий — загружается, светлый — готов");
+                ui.label("Серый — отсутствует, синий — загружается, зелёный — готов");
                 let pieces = data.as_array().cloned().unwrap_or_default();
                 let (rect, _) = ui.allocate_exact_size(
                     egui::vec2(ui.available_width(), 60.0),
@@ -593,7 +610,7 @@ impl Remote {
                     let index = i * pieces.len() / bins;
                     let state = pieces.get(index).and_then(Value::as_i64).unwrap_or(0);
                     let color = match state {
-                        2 => crate::theme::palette(ui.ctx()).muted,
+                        2 => crate::theme::palette(ui.ctx()).green,
                         1 => crate::theme::palette(ui.ctx()).blue,
                         _ => crate::theme::palette(ui.ctx()).button,
                     };
@@ -707,10 +724,13 @@ impl Remote {
                 menu_group(ui, "Режим загрузки");
             }
             let icon = match method {
-                "recheck" => 6,
-                "reannounce" => 7,
-                "increasePrio" | "topPrio" => 2,
-                "decreasePrio" | "bottomPrio" => 1,
+                "recheck" => crate::ui_icons::VERIFY,
+                "reannounce" => crate::ui_icons::TRACKERS,
+                "increasePrio" => 2,
+                "decreasePrio" => 1,
+                "topPrio" => crate::ui_icons::TOP,
+                "bottomPrio" => crate::ui_icons::BOTTOM,
+                "toggleFirstLastPiecePrio" => crate::ui_icons::EDGES,
                 _ => 8,
             };
             if action_menu_item(ui, label, icon, false).clicked() {
@@ -751,7 +771,12 @@ impl Remote {
                 continue;
             }
             let enabled = count == 1 && t.extra.get(key).and_then(Value::as_bool).unwrap_or(false);
-            if action_menu_item(ui, label, 9, enabled).clicked() {
+            let icon = match method {
+                "setForceStart" => crate::ui_icons::FORCE,
+                "setAutoManagement" => crate::ui_icons::AUTO,
+                _ => crate::ui_icons::SEED,
+            };
+            if action_menu_item(ui, label, icon, enabled).clicked() {
                 self.action(
                     label,
                     &format!("torrents/{method}"),
@@ -812,9 +837,15 @@ impl Remote {
             if path == "rename" && count > 1 {
                 continue;
             }
-            if action_menu_item(ui, title, if path == "setLocation" { 2 } else { 10 }, false)
-                .clicked()
-            {
+            let icon = match path {
+                "rename" => crate::ui_icons::RENAME,
+                "setCategory" => crate::ui_icons::CATEGORY,
+                "addTags" => crate::ui_icons::ADD_TAG,
+                "removeTags" => crate::ui_icons::REMOVE_TAG,
+                "setComment" => crate::ui_icons::COMMENT,
+                _ => crate::ui_icons::MOVE,
+            };
+            if action_menu_item(ui, title, icon, false).clicked() {
                 let hk = if path == "rename" { "hash" } else { "hashes" };
                 self.open_form(
                     title,
@@ -838,7 +869,12 @@ impl Remote {
             ("Лимит скачивания…", "setDownloadLimit"),
             ("Лимит отдачи…", "setUploadLimit"),
         ] {
-            if action_menu_item(ui, title, 9, false).clicked() {
+            let icon = if method == "setDownloadLimit" {
+                crate::ui_icons::DOWNLOAD_LIMIT
+            } else {
+                crate::ui_icons::UPLOAD_LIMIT
+            };
+            if action_menu_item(ui, title, icon, false).clicked() {
                 self.open_form(
                     title,
                     &format!("torrents/{method}"),
@@ -849,7 +885,14 @@ impl Remote {
                 ui.close_menu();
             }
         }
-        if action_menu_item(ui, "Ограничения раздачи…", 9, false).clicked() {
+        if action_menu_item(
+            ui,
+            "Ограничения раздачи…",
+            crate::ui_icons::SHARE_LIMIT,
+            false,
+        )
+        .clicked()
+        {
             self.open_form(
                 "Ограничения раздачи",
                 "torrents/setShareLimits",
@@ -879,7 +922,14 @@ impl Remote {
             );
             ui.close_menu();
         }
-        if count == 1 && action_menu_item(ui, "Экспортировать .torrent…", 1, false).clicked()
+        if count == 1
+            && action_menu_item(
+                ui,
+                "Экспортировать .torrent…",
+                crate::ui_icons::EXPORT,
+                false,
+            )
+            .clicked()
         {
             if let Some(destination) = rfd::FileDialog::new()
                 .add_filter("Torrent", &["torrent"])
@@ -1093,8 +1143,6 @@ impl Remote {
         }
         match path {
             Ok(path) => {
-                self.message = format!("Открытие: {}", path.display());
-                self.error = false;
                 let (sender, receiver) = std::sync::mpsc::channel();
                 self.open_result = Some(receiver);
                 std::thread::spawn(move || {
@@ -1117,18 +1165,31 @@ impl Remote {
         mappings: &[crate::path_mapping::PathMapping],
     ) {
         let hash = &torrent.hash;
-        if ui
-            .button("Открыть папку загрузки")
-            .on_hover_text("Через сопоставление путей выбранного сервера")
-            .clicked()
-        {
-            self.open_mapped(mappings, &torrent.save_path, "", false);
-        }
         ui.horizontal_wrapped(|ui| {
             ui.add(
                 egui::TextEdit::singleline(&mut self.file_filter)
                     .hint_text("Поиск по имени или пути…"),
             );
+            let open_folder = ui
+                .add_sized(egui::vec2(26.0, 20.0), egui::Button::new(""))
+                .on_hover_text(
+                    "Открыть папку загрузки\nЧерез сопоставление путей выбранного сервера",
+                );
+            crate::file_icons::paint_open_folder(
+                ui.painter(),
+                egui::Rect::from_center_size(open_folder.rect.center(), egui::vec2(20.0, 16.0)),
+            );
+            open_folder.widget_info(|| {
+                egui::WidgetInfo::labeled(
+                    egui::WidgetType::Button,
+                    ui.is_enabled(),
+                    "Открыть папку загрузки",
+                )
+            });
+            if open_folder.clicked() {
+                self.open_mapped(mappings, &torrent.save_path, "", false);
+            }
+
             if ui.button("Развернуть всё").clicked() {
                 self.collapsed_folders.clear();
             }
@@ -1238,7 +1299,8 @@ fn file_context_menu(
         *open = Some((text(file, "__path"), true));
         ui.close_menu();
     }
-    if folder && action_menu_item(ui, "Переименовать папку…", 10, false).clicked()
+    if folder
+        && action_menu_item(ui, "Переименовать папку…", crate::ui_icons::RENAME, false).clicked()
     {
         *rename = Some(text(file, "__path"));
         ui.close_menu();
@@ -1296,23 +1358,27 @@ fn file_tree_table(
                         row.col(|ui| {
                             ui.add_space(number(file, "__depth") as f32 * 16.0);
                             if folder {
-                                let arrow = if file["__open"].as_bool() == Some(true) {
-                                    "▼"
+                                let icon = crate::file_icons::show(
+                                    ui,
+                                    "",
+                                    Some(file["__open"].as_bool() == Some(true)),
+                                )
+                                .on_hover_text(if searching {
+                                    "Папки раскрыты для результатов поиска"
                                 } else {
-                                    "▶"
-                                };
-                                if ui
-                                    .add(
-                                        egui::Label::new(
-                                            RichText::new(arrow)
-                                                .color(crate::theme::palette(ui.ctx()).orange),
-                                        )
-                                        .selectable(false)
-                                        .sense(egui::Sense::click()),
+                                    "Нажмите папку, чтобы раскрыть или свернуть ветку"
+                                });
+                                #[cfg(test)]
+                                ui.ctx().data_mut(|data| {
+                                    data.insert_temp(
+                                        egui::Id::new(("folder-icon", hash, text(file, "__path"))),
+                                        icon.rect.center(),
                                     )
-                                    .clicked()
-                                    && !searching
-                                {
+                                });
+                                icon.context_menu(|ui| {
+                                    file_context_menu(ui, file, &mut rename, &mut open)
+                                });
+                                if icon.clicked() && !searching {
                                     toggled = Some(text(file, "__path"));
                                 }
                                 let label = format!(
@@ -1342,7 +1408,13 @@ fn file_tree_table(
                                     file_context_menu(ui, file, &mut rename, &mut open)
                                 });
                             } else {
-                                ui.add_space(18.0);
+                                let icon = crate::file_icons::show(ui, &text(file, "name"), None);
+                                if icon.double_clicked() {
+                                    open = Some((text(file, "__path"), false));
+                                }
+                                icon.context_menu(|ui| {
+                                    file_context_menu(ui, file, &mut rename, &mut open)
+                                });
                                 let response = ui
                                     .add(
                                         egui::Label::new(text(file, "name"))
@@ -1448,7 +1520,7 @@ fn speed_graph(ui: &mut egui::Ui, history: &VecDeque<(f32, f32)>) {
             .collect();
         if points.len() > 1 {
             ui.painter()
-                .add(egui::Shape::line(points, egui::Stroke::new(1.5_f32, color)));
+                .add(egui::Shape::line(points, egui::Stroke::new(1.0_f32, color)));
         }
     }
     ui.label(format!("Верхняя граница: {}/с", bytes(peak as u64)));
@@ -1659,6 +1731,96 @@ fn label(key: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn opening_results_are_silent_except_errors_and_preserve_other_notices() {
+        use super::*;
+        for result in [
+            Ok(Some(std::path::PathBuf::from("Y:\\complete\\file.txt"))),
+            Ok(None),
+            Err("Путь недоступен: Y:\\complete\\missing".into()),
+        ] {
+            let failed = result.is_err();
+            let (sender, receiver) = std::sync::mpsc::channel();
+            sender.send(result).unwrap();
+            let mut remote = Remote {
+                message: "Сообщение другой операции".into(),
+                error: false,
+                open_result: Some(receiver),
+                ..Default::default()
+            };
+            let ctx = egui::Context::default();
+            let _ = ctx.run(egui::RawInput::default(), |ctx| remote.dialogs(ctx, true));
+            assert!(remote.open_result.is_none());
+            assert_eq!(remote.error, failed);
+            assert_eq!(
+                remote.message,
+                if failed {
+                    "Путь недоступен: Y:\\complete\\missing"
+                } else {
+                    "Сообщение другой операции"
+                }
+            );
+        }
+    }
+    #[test]
+    fn clicking_folder_icon_collapses_and_reopens_without_opening_a_local_path() {
+        use super::*;
+        let ctx = egui::Context::default();
+        let files = json!([{"name":"Folder/file.txt","index":0}]);
+        let mut collapsed = std::collections::HashSet::new();
+        let mut target = egui::Pos2::ZERO;
+        let mut changes = 0;
+        for frame in 0..7 {
+            let mut input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1200.0, 700.0),
+                )),
+                time: Some(frame as f64 * 0.3),
+                ..Default::default()
+            };
+            if [1, 2, 4, 5].contains(&frame) {
+                input.events = vec![
+                    egui::Event::PointerMoved(target),
+                    egui::Event::PointerButton {
+                        pos: target,
+                        button: egui::PointerButton::Primary,
+                        pressed: [1, 4].contains(&frame),
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ];
+            }
+            let _ = ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let rows = file_tree::rows(&files, "", &collapsed);
+                    let (toggle, rename, open) =
+                        file_tree_table(ui, "icon-test", &rows, false, |_, _| {});
+                    assert!(rename.is_none() && open.is_none());
+                    if let Some(path) = toggle {
+                        if !collapsed.remove(&path) {
+                            collapsed.insert(path);
+                        }
+                        changes += 1;
+                    }
+                    target = ctx
+                        .data(|data| {
+                            data.get_temp::<egui::Pos2>(egui::Id::new((
+                                "folder-icon",
+                                "icon-test",
+                                "Folder".to_owned(),
+                            )))
+                        })
+                        .unwrap();
+                });
+            });
+            if frame == 2 {
+                assert_eq!(file_tree::rows(&files, "", &collapsed).len(), 1);
+            }
+        }
+        assert_eq!(changes, 2);
+        assert!(collapsed.is_empty());
+        assert_eq!(file_tree::rows(&files, "", &collapsed).len(), 2);
+    }
     #[test]
     fn torrent_context_menu_exposes_open_commands_and_disables_them_for_groups() {
         use super::*;

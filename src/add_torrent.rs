@@ -483,30 +483,6 @@ fn file_area(
     footer.inner
 }
 
-fn disclosure(ui: &mut egui::Ui, open: bool) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(14.0, 18.0), egui::Sense::click());
-    let c = rect.center();
-    let points = if open {
-        vec![
-            c + egui::vec2(-4.0, -2.0),
-            c + egui::vec2(4.0, -2.0),
-            c + egui::vec2(0.0, 3.0),
-        ]
-    } else {
-        vec![
-            c + egui::vec2(-2.0, -4.0),
-            c + egui::vec2(-2.0, 4.0),
-            c + egui::vec2(3.0, 0.0),
-        ]
-    };
-    ui.painter().add(egui::Shape::convex_polygon(
-        points,
-        crate::theme::palette(ui.ctx()).orange,
-        egui::Stroke::NONE,
-    ));
-    response
-}
-
 fn file_table(
     ui: &mut egui::Ui,
     files: &mut [File],
@@ -567,8 +543,8 @@ fn file_table(
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x=3.0;ui.add_space(node.depth as f32*13.0);
                         if folder {
-                            if disclosure(ui,!filter.trim().is_empty()||!collapsed.contains(&node_id)).clicked() && !collapsed.remove(&node_id){collapsed.insert(node_id);}
-                        }else{ui.add_space(14.0);}
+                            if crate::file_icons::show(ui,"",Some(!filter.trim().is_empty()||!collapsed.contains(&node_id))).clicked() && !collapsed.remove(&node_id){collapsed.insert(node_id);}
+                        }else{crate::file_icons::show(ui,&node.name,None);}
                         let mut selected=state.selected==node.count;
                         let mixed=state.selected>0&&state.selected<node.count;
                         let response=ui.add(egui::Checkbox::new(&mut selected,"").indeterminate(mixed)).on_hover_text(if folder{"Выбрать или исключить все файлы папки, включая скрытые фильтром"}else{"Скачать файл"});

@@ -63,6 +63,17 @@ try {
     & ./target/debug/qbit-remote.exe
     if ($LASTEXITCODE -ne 0) { throw 'Screenshot failed: add-torrent' }
     Copy-Item -LiteralPath dist/ui-smoke.png -Destination docs/screenshots/add-torrent.png
+    foreach ($entry in @(
+        @{ Page = 'path-mappings'; Destination = 'docs/path-mappings.png' },
+        @{ Page = 'actions'; Destination = 'docs/torrent-open-menu.png' },
+        @{ Page = 'torrents'; Destination = 'docs/status-bar.png' }
+    )) {
+        $env:QBIT_SMOKE_PAGE = $entry.Page
+        Remove-Item -LiteralPath dist/ui-smoke.png, dist/ui-smoke-state.ron -ErrorAction SilentlyContinue
+        & ./target/debug/qbit-remote.exe
+        if ($LASTEXITCODE -ne 0) { throw "Screenshot failed: $($entry.Page)" }
+        Copy-Item -LiteralPath dist/ui-smoke.png -Destination $entry.Destination
+    }
 } finally {
     $env:QBIT_SMOKE_MULTI = $previousMulti
     $env:QBIT_SMOKE_FREE_SPACE = $previousSpace

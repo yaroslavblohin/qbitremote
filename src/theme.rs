@@ -39,7 +39,7 @@ impl Theme {
 
     pub fn name(self) -> &'static str {
         match self {
-            Self::Marine => "Marine LLM Theme",
+            Self::Marine => "Marine Dark Theme",
             Self::Graphite => "Graphite Theme",
             Self::White => "White Theme",
         }

@@ -64,6 +64,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Screenshot failed: add-torrent' }
     Copy-Item -LiteralPath dist/ui-smoke.png -Destination docs/screenshots/add-torrent.png
     foreach ($entry in @(
+        @{ Page = 'console'; Destination = 'docs/screenshots/console.png' },
         @{ Page = 'peers'; Destination = 'docs/screenshots/peers.png' },
         @{ Page = 'trackers'; Destination = 'docs/screenshots/trackers.png' },
         @{ Page = 'about'; Destination = 'docs/screenshots/about.png' },

@@ -7,6 +7,7 @@ use egui_extras::{Column, TableBuilder};
 use std::sync::mpsc::{Receiver, Sender};
 
 pub struct ClientApp {
+    console: crate::console::Console,
     server_free_space: Option<u64>,
     add_flow: crate::add_torrent::AddFlow,
     pending_files: std::collections::VecDeque<std::path::PathBuf>,
@@ -62,6 +63,12 @@ impl ClientApp {
             _ => crate::theme::Theme::Graphite,
         };
         self.remote.smoke_fixture();
+        if std::env::var("QBIT_SMOKE_PAGE").as_deref() == Ok("console") {
+            self.console.open = true;
+            self.console.record("Добавлено: 1".into(), false);
+            self.console
+                .record("Торрент уже в конце очереди".into(), true);
+        }
         if std::env::var("QBIT_SMOKE_PAGE").as_deref() == Ok("about") {
             self.about_open = true;
         }
@@ -204,6 +211,7 @@ impl ClientApp {
             && !cfg!(feature = "ui-smoke");
         let (sort, descending) = crate::columns::restored_sort(&settings);
         let mut app = Self {
+            console: Default::default(),
             server_free_space: None,
             add_flow: Default::default(),
             pending_files: Default::default(),
@@ -409,7 +417,14 @@ impl ClientApp {
             }
         }
     }
+    fn collect_console_messages(&mut self) {
+        self.console
+            .record(std::mem::take(&mut self.notice), self.is_error);
+        self.console
+            .record(std::mem::take(&mut self.remote.message), self.remote.error);
+    }
     fn receive(&mut self) {
+        self.collect_console_messages();
         while let Ok((epoch, event)) = self.rx.try_recv() {
             if epoch != self.connection_epoch {
                 continue;
@@ -483,6 +498,7 @@ impl ClientApp {
                     self.is_error = false;
                 }
             }
+            self.collect_console_messages();
         }
     }
     fn matches_filter(t: &Torrent, filter: usize) -> bool {
@@ -899,6 +915,8 @@ impl ClientApp {
                     }
                 });
                 ui.menu_button("Вид", |ui| {
+                    self.console.menu(ui);
+                    ui.separator();
                     ui.menu_button("Тема оформления", |ui| {
                         for theme in crate::theme::Theme::ALL {
                             if ui
@@ -1146,375 +1164,400 @@ impl eframe::App for ClientApp {
                 }
             }
         }
-        egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(palette.surface).inner_margin(16.0))
-            .show(ctx, |ui| {
-                if !self.remote.message.is_empty() {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.colored_label(
-                            if self.remote.error {
-                                palette.red
-                            } else {
-                                palette.muted
-                            },
-                            &self.remote.message,
-                        );
-                        if ui.small_button("×").clicked() {
-                            self.remote.message.clear();
-                        }
-                    });
+        torrent_panel(ctx, |ui| {
+            if self.connected && self.remote.page != crate::remote::Page::Torrents {
+                self.remote.page_ui(ui, &mut self.settings.path_mappings);
+                return;
+            }
+            ui.horizontal(|ui| {
+                ui.heading(
+                    [
+                        "Все торренты",
+                        "Загрузка",
+                        "Раздача",
+                        "Остановлены",
+                        "Ошибки",
+                    ][self.filter],
+                );
+                ui.label(RichText::new(self.torrents.len().to_string()).color(palette.muted));
+            });
+            ui.add_space(8.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.add_sized(
+                    egui::vec2(180.0, 32.0),
+                    egui::TextEdit::singleline(&mut self.search)
+                        .hint_text("Поиск торрентов…")
+                        .margin(egui::Margin::symmetric(8, 7))
+                        .desired_width(180.0),
+                );
+                if ui
+                    .add_enabled(self.connected, |ui: &mut egui::Ui| {
+                        torrent_action_button(
+                            ui,
+                            "Добавить торрент",
+                            3,
+                            Color32::from_rgb(30, 125, 205),
+                        )
+                    })
+                    .clicked()
+                {
+                    self.add_open = true;
                 }
-                if self.connected && self.remote.page != crate::remote::Page::Torrents {
-                    self.remote.page_ui(ui, &mut self.settings.path_mappings);
-                    return;
-                }
-                ui.horizontal(|ui| {
-                    ui.heading(
-                        [
-                            "Все торренты",
-                            "Загрузка",
-                            "Раздача",
-                            "Остановлены",
-                            "Ошибки",
-                        ][self.filter],
-                    );
-                    ui.label(RichText::new(self.torrents.len().to_string()).color(palette.muted));
-
-                });
-                ui.add_space(8.0);
-                ui.horizontal_wrapped(|ui| {
-                    ui.add_sized(egui::vec2(180.0, 32.0),
-                        egui::TextEdit::singleline(&mut self.search)
-                            .hint_text("Поиск торрентов…")
-                            .margin(egui::Margin::symmetric(8, 7))
-                            .desired_width(180.0),
-                    );
-                    if ui.add_enabled(self.connected, |ui: &mut egui::Ui| torrent_action_button(ui, "Добавить торрент", 3, Color32::from_rgb(30, 125, 205))).clicked() {
-                        self.add_open = true;
-                    }
-                    let hashes = self.selected_hashes();
-                    ui.add_enabled_ui(self.connected && !hashes.is_empty(), |ui| {
-                        if ui
-                            .add(|ui: &mut egui::Ui| torrent_action_button(ui, "Запустить", 0, Color32::from_rgb(24, 164, 66)))
-                            .clicked()
-                        {
-                            self.send(Command::Start(hashes.clone()));
-                        }
-                        if ui
-                            .add(|ui: &mut egui::Ui| torrent_action_button(ui, "Остановить", 1, Color32::from_rgb(184, 109, 18)))
-                            .clicked()
-                        {
-                            self.send(Command::Stop(hashes.clone()));
-                        }
-                        if ui.add(|ui: &mut egui::Ui| torrent_action_button(ui, "Удалить", 2, Color32::from_rgb(205, 47, 54))).clicked() {
-                            self.prepare_delete();
-                        }
-                        for (label, icon, up, color) in [
-                            ("Выше в очереди", 4, true, Color32::from_rgb(133, 76, 199)),
-                            ("Ниже в очереди", 5, false, Color32::from_rgb(136, 36, 66)),
-                        ] {
-                            if ui.add(|ui: &mut egui::Ui| torrent_action_button(ui, label, icon, color)).clicked() {
-                                self.remote.move_in_queue(&hashes, up);
-                            }
-                        }
-                    });
-
-
-                });
-                if !self.notice.is_empty() {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.colored_label(
-                            if self.is_error {
-                                palette.red
-                            } else {
-                                palette.muted
-                            },
-                            &self.notice,
-                        );
-                        if ui.small_button("×").clicked() {
-                            self.notice.clear();
-                        }
-                    });
-                }
-                ui.add_space(8.0);
-                ui.separator();
-                if !self.connected {
-                    ui.add_space(90.0);
-                    ui.vertical_centered(|ui| {
-                        ui.label(RichText::new("Подключите сервер").size(22.0));
-                        ui.add_space(12.0);
-                        ui.label(
-                            RichText::new(
-                                "Подключите сервер qBittorrent, чтобы управлять торрентами.",
+                let hashes = self.selected_hashes();
+                ui.add_enabled_ui(self.connected && !hashes.is_empty(), |ui| {
+                    if ui
+                        .add(|ui: &mut egui::Ui| {
+                            torrent_action_button(
+                                ui,
+                                "Запустить",
+                                0,
+                                Color32::from_rgb(24, 164, 66),
                             )
-                            .color(palette.muted),
-                        );
-                        ui.add_space(16.0);
-                        if ui.button("Настроить подключение").clicked() {
-                            self.settings_open = true;
+                        })
+                        .clicked()
+                    {
+                        self.send(Command::Start(hashes.clone()));
+                    }
+                    if ui
+                        .add(|ui: &mut egui::Ui| {
+                            torrent_action_button(
+                                ui,
+                                "Остановить",
+                                1,
+                                Color32::from_rgb(184, 109, 18),
+                            )
+                        })
+                        .clicked()
+                    {
+                        self.send(Command::Stop(hashes.clone()));
+                    }
+                    if ui
+                        .add(|ui: &mut egui::Ui| {
+                            torrent_action_button(ui, "Удалить", 2, Color32::from_rgb(205, 47, 54))
+                        })
+                        .clicked()
+                    {
+                        self.prepare_delete();
+                    }
+                    for (label, icon, up, color) in [
+                        ("Выше в очереди", 4, true, Color32::from_rgb(133, 76, 199)),
+                        ("Ниже в очереди", 5, false, Color32::from_rgb(136, 36, 66)),
+                    ] {
+                        if ui
+                            .add(|ui: &mut egui::Ui| torrent_action_button(ui, label, icon, color))
+                            .clicked()
+                        {
+                            self.remote.move_in_queue(&hashes, up);
                         }
-                    });
-                    return;
-                }
-                let query = self.search.to_lowercase();
-                let mut rows: Vec<_> = self
-                    .torrents
-                    .iter()
-                    .filter(|t| {
-                        Self::matches_filter(t, self.filter)
-                            && t.name.to_lowercase().contains(&query)
-                    })
-                    .collect();
-                rows.sort_by(|a, b| {
-                    let order = crate::columns::COLUMNS[self.sort].compare(a, b);
-                    if self.descending {
-                        order.reverse()
-                    } else {
-                        order
                     }
                 });
-                let ordered_hashes: Vec<String> = rows.iter().map(|t| t.hash.clone()).collect();
-                self.selection.retain(&ordered_hashes);
-                if self
-                    .selected
-                    .as_ref()
-                    .is_some_and(|h| !self.selection.hashes.contains(h))
-                {
-                    self.selected = self.selection.hashes.iter().next().cloned();
-                }
-                if !ctx.wants_keyboard_input() && !self.add_flow.active()
-                    && !self.remote.dialog_open()
-                    && !ctx.memory(|m| m.any_popup_open())
-                    && !self.settings_open
-                    && !self.add_open
-                    && self.delete.is_none()
-                {
-                    if ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::A)) {
-                        self.selection.all(&ordered_hashes);
-                        self.selected = ordered_hashes.first().cloned();
-                    }
-                    if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
-                        self.selection.clear();
-                        self.selected = None;
-                    }
-                }
-                if rows.is_empty() {
-                    ui.add_space(40.0);
-                    ui.label("Торренты не найдены. Добавьте торрент или измените фильтр.");
-                    return;
-                }
-                let visible: Vec<_> = self
-                    .settings
-                    .visible_columns
-                    .iter()
-                    .filter_map(|key| {
-                        crate::columns::COLUMNS
-                            .iter()
-                            .enumerate()
-                            .find(|(_, c)| c.key == key)
-                    })
-                    .collect();
-                let mut column_drop = None;
-                let table_width = visible
-                    .iter()
-                    .map(|(_, c)| c.saved_width(&self.settings) + 8.0)
-                    .sum::<f32>()
-                    .max(ui.available_width());
-                egui::ScrollArea::horizontal()
-                    .id_salt("torrent-columns-scroll")
-                    .show(ui, |ui| {
-                        ui.set_width(table_width);
-                        let keys: Vec<_> = visible.iter().map(|(_, c)| c.key).collect();
-                        let layout: Vec<String> =
-                            keys.iter().map(|key| (*key).to_owned()).collect();
-                        let mut table = TableBuilder::new(ui)
-                            .id_salt(("torrent-columns", keys))
-                            .striped(true)
-                            .sense(egui::Sense::click())
-                            .resizable(true)
-                            .cell_layout(egui::Layout::left_to_right(egui::Align::Center));
-                        for (_, c) in &visible {
-                            table = table.column(
-                                Column::initial(c.saved_width(&self.settings))
-                                    .at_least(60.0)
-                                    .clip(true),
-                            );
-                        }
-                        // Keyed widths are authoritative after restart or a visibility/order change.
-                        if self.column_layout != layout {
-                            table.reset();
-                            self.column_layout = layout;
-                        }
-                        table
-                            .header(24.0, |mut header| {
-                                for (index, c) in &visible {
-                                    header.col(|ui| {
-                                        let title = if self.sort == *index {
-                                            format!(
-                                                "{} {}",
-                                                c.title,
-                                                if self.descending { "↓" } else { "↑" }
-                                            )
-                                        } else {
-                                            c.title.to_owned()
-                                        };
-                                        let response = column_header(ui, &title);
-                                        if response.drag_started() {
-                                            self.dragged_column = Some(c.key.to_owned());
-                                        }
-                                        if let Some(source) = &self.dragged_column {
-                                            if response.contains_pointer() && source != c.key {
-                                                let after = ui.input(|i| {
-                                                    i.pointer.hover_pos().is_some_and(|p| {
-                                                        p.x > response.rect.center().x
-                                                    })
-                                                });
-                                                let x = if after {
-                                                    response.rect.right()
-                                                } else {
-                                                    response.rect.left()
-                                                };
-                                                ui.painter().vline(
-                                                    x,
-                                                    response.rect.y_range(),
-                                                    egui::Stroke::new(2.0_f32, palette.accent),
-                                                );
-                                                if ui.input(|i| i.pointer.any_released()) {
-                                                    column_drop = Some((
-                                                        source.clone(),
-                                                        c.key.to_owned(),
-                                                        after,
-                                                    ));
-                                                }
-                                            }
-                                        }
-                                        if response.clicked() {
-                                            if self.sort == *index {
-                                                self.descending = !self.descending;
-                                            } else {
-                                                self.sort = *index;
-                                                self.descending = false;
-                                            }
-                                        }
-                                    });
-                                }
-                            })
-                            .body(|body| {
-                                for ((_, column), width) in visible.iter().zip(body.widths()) {
-                                    if width.is_finite() && *width >= 60.0 {
-                                        self.settings
-                                            .column_widths
-                                            .insert(column.key.to_owned(), *width);
-                                    }
-                                }
-                                body.rows(18.0, rows.len(), |mut row| {
-                                    let t = rows[row.index()];
-                                    row.set_selected(self.selection.hashes.contains(&t.hash));
-                                    for (_, c) in &visible {
-                                        row.col(|ui| {
-                                            if c.key == "progress" {
-                                                torrent_progress(ui, t);
-                                            } else {
-                                                let color = match c.key {
-                                                    "state" => torrent_color(t, palette),
-                                                    "dlspeed" if t.dlspeed > 0 => palette.blue,
-                                                    "upspeed" if t.upspeed > 0 => palette.green,
-                                                    _ => ui.visuals().text_color(),
-                                                };
-                                                let text = c.display(t);
-                                                torrent_cell_text(ui, &text, color)
-                                                    .on_hover_text(text);
-                                            }
-                                        });
-                                    }
-                                    let response = row.response();
-                                    #[cfg(feature = "ui-smoke")]
-                                    if t.hash == "fixture-1" {
-                                        ctx.data_mut(|data| {
-                                            data.insert_temp(
-                                                egui::Id::new("smoke-torrent-row"),
-                                                response.rect.center(),
-                                            )
-                                        });
-                                    }
-                                    if response.clicked() || response.secondary_clicked() {
-                                        let modifiers = ctx.input(|i| i.modifiers);
-                                        self.selection.click(
-                                            &t.hash,
-                                            &ordered_hashes,
-                                            modifiers.ctrl,
-                                            modifiers.shift,
-                                            response.secondary_clicked(),
-                                        );
-                                        self.selected = if self.selection.hashes.contains(&t.hash) {
-                                            Some(t.hash.clone())
-                                        } else {
-                                            self.selection.hashes.iter().next().cloned()
-                                        };
-                                    }
-                                    response.context_menu(|ui| {
-                                        ui.set_width(290.0);
-                                        ui.style_mut().override_font_id=Some(egui::FontId::proportional(12.0));
-                                        ui.spacing_mut().item_spacing.y=1.0;
-                                        egui::ScrollArea::vertical()
-                                            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
-                                            .max_height((ctx.screen_rect().height()*0.8).max(180.0))
-                                            .show(ui,|ui| {
-                                        let hashes = self
-                                            .selection
-                                            .hashes
-                                            .iter()
-                                            .cloned()
-                                            .collect::<Vec<_>>()
-                                            .join("|");
-                                        let count = self.selection.hashes.len();
-                                        ui.weak(format!("Выбрано: {count}"));
-                                        if crate::remote::action_menu_item(ui,"Запустить",crate::ui_icons::PLAY,false).clicked() {
-                                            let _ = self.tx.send(Command::Start(hashes.clone()));
-                                            ui.close_menu();
-                                        }
-                                        if crate::remote::action_menu_item(ui,"Остановить",3,false).clicked() {
-                                            let _ = self.tx.send(Command::Stop(hashes.clone()));
-                                            ui.close_menu();
-                                        }
-                                        if crate::remote::action_menu_item(ui,"Удалить…",4,false).clicked() {
-                                            let names = rows
-                                                .iter()
-                                                .filter(|t| self.selection.hashes.contains(&t.hash))
-                                                .map(|t| t.name.clone())
-                                                .collect::<Vec<_>>()
-                                                .join("\n");
-                                            self.delete = Some((
-                                                hashes.clone(),
-                                                format!("Торрентов: {count}\n{names}"),
-                                            ));
-                                            self.delete_files = false;
-                                            ui.close_menu();
-                                        }
-
-                                        self.remote.torrent_actions(ui, t, &hashes, count, &self.settings.path_mappings);
-
-                                        });
-                                    });
-                                });
-                            });
-                    });
-                if let Some((source, target, after)) = column_drop {
-                    crate::columns::move_column(
-                        &mut self.settings.visible_columns,
-                        &source,
-                        &target,
-                        after,
+            });
+            ui.add_space(8.0);
+            ui.separator();
+            if !self.connected {
+                ui.add_space(90.0);
+                ui.vertical_centered(|ui| {
+                    ui.label(RichText::new("Подключите сервер").size(22.0));
+                    ui.add_space(12.0);
+                    ui.label(
+                        RichText::new("Подключите сервер qBittorrent, чтобы управлять торрентами.")
+                            .color(palette.muted),
                     );
-                }
-                if ctx.input(|i| i.pointer.any_released() || !i.pointer.primary_down()) {
-                    self.dragged_column = None;
-                }
-                // TableBuilder applies resizing after body(); capture its final widths next frame.
-                if ctx.input(|i| i.pointer.any_down() || i.pointer.any_released()) {
-                    ctx.request_repaint();
+                    ui.add_space(16.0);
+                    if ui.button("Настроить подключение").clicked() {
+                        self.settings_open = true;
+                    }
+                });
+                return;
+            }
+            let query = self.search.to_lowercase();
+            let mut rows: Vec<_> = self
+                .torrents
+                .iter()
+                .filter(|t| {
+                    Self::matches_filter(t, self.filter) && t.name.to_lowercase().contains(&query)
+                })
+                .collect();
+            rows.sort_by(|a, b| {
+                let order = crate::columns::COLUMNS[self.sort].compare(a, b);
+                if self.descending {
+                    order.reverse()
+                } else {
+                    order
                 }
             });
+            let ordered_hashes: Vec<String> = rows.iter().map(|t| t.hash.clone()).collect();
+            self.selection.retain(&ordered_hashes);
+            if self
+                .selected
+                .as_ref()
+                .is_some_and(|h| !self.selection.hashes.contains(h))
+            {
+                self.selected = self.selection.hashes.iter().next().cloned();
+            }
+            if !ctx.wants_keyboard_input()
+                && !self.add_flow.active()
+                && !self.remote.dialog_open()
+                && !ctx.memory(|m| m.any_popup_open())
+                && !self.settings_open
+                && !self.add_open
+                && self.delete.is_none()
+            {
+                if ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::A)) {
+                    self.selection.all(&ordered_hashes);
+                    self.selected = ordered_hashes.first().cloned();
+                }
+                if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+                    self.selection.clear();
+                    self.selected = None;
+                }
+            }
+            if rows.is_empty() {
+                ui.add_space(40.0);
+                ui.label("Торренты не найдены. Добавьте торрент или измените фильтр.");
+                return;
+            }
+            let visible: Vec<_> = self
+                .settings
+                .visible_columns
+                .iter()
+                .filter_map(|key| {
+                    crate::columns::COLUMNS
+                        .iter()
+                        .enumerate()
+                        .find(|(_, c)| c.key == key)
+                })
+                .collect();
+            let mut column_drop = None;
+            let table_width = visible
+                .iter()
+                .map(|(_, c)| c.saved_width(&self.settings) + 8.0)
+                .sum::<f32>()
+                .max(ui.available_width());
+            egui::ScrollArea::horizontal()
+                .id_salt("torrent-columns-scroll")
+                .show(ui, |ui| {
+                    ui.set_width(table_width);
+                    let keys: Vec<_> = visible.iter().map(|(_, c)| c.key).collect();
+                    let layout: Vec<String> = keys.iter().map(|key| (*key).to_owned()).collect();
+                    let mut table = TableBuilder::new(ui)
+                        .id_salt(("torrent-columns", keys))
+                        .striped(true)
+                        .sense(egui::Sense::click())
+                        .resizable(true)
+                        .cell_layout(egui::Layout::left_to_right(egui::Align::Center));
+                    for (_, c) in &visible {
+                        table = table.column(
+                            Column::initial(c.saved_width(&self.settings))
+                                .at_least(60.0)
+                                .clip(true),
+                        );
+                    }
+                    // Keyed widths are authoritative after restart or a visibility/order change.
+                    if self.column_layout != layout {
+                        table.reset();
+                        self.column_layout = layout;
+                    }
+                    table
+                        .header(24.0, |mut header| {
+                            for (index, c) in &visible {
+                                header.col(|ui| {
+                                    let title = if self.sort == *index {
+                                        format!(
+                                            "{} {}",
+                                            c.title,
+                                            if self.descending { "↓" } else { "↑" }
+                                        )
+                                    } else {
+                                        c.title.to_owned()
+                                    };
+                                    let response = column_header(ui, &title);
+                                    if response.drag_started() {
+                                        self.dragged_column = Some(c.key.to_owned());
+                                    }
+                                    if let Some(source) = &self.dragged_column {
+                                        if response.contains_pointer() && source != c.key {
+                                            let after = ui.input(|i| {
+                                                i.pointer
+                                                    .hover_pos()
+                                                    .is_some_and(|p| p.x > response.rect.center().x)
+                                            });
+                                            let x = if after {
+                                                response.rect.right()
+                                            } else {
+                                                response.rect.left()
+                                            };
+                                            ui.painter().vline(
+                                                x,
+                                                response.rect.y_range(),
+                                                egui::Stroke::new(2.0_f32, palette.accent),
+                                            );
+                                            if ui.input(|i| i.pointer.any_released()) {
+                                                column_drop =
+                                                    Some((source.clone(), c.key.to_owned(), after));
+                                            }
+                                        }
+                                    }
+                                    if response.clicked() {
+                                        if self.sort == *index {
+                                            self.descending = !self.descending;
+                                        } else {
+                                            self.sort = *index;
+                                            self.descending = false;
+                                        }
+                                    }
+                                });
+                            }
+                        })
+                        .body(|body| {
+                            for ((_, column), width) in visible.iter().zip(body.widths()) {
+                                if width.is_finite() && *width >= 60.0 {
+                                    self.settings
+                                        .column_widths
+                                        .insert(column.key.to_owned(), *width);
+                                }
+                            }
+                            body.rows(18.0, rows.len(), |mut row| {
+                                let t = rows[row.index()];
+                                row.set_selected(self.selection.hashes.contains(&t.hash));
+                                for (_, c) in &visible {
+                                    row.col(|ui| {
+                                        if c.key == "progress" {
+                                            torrent_progress(ui, t);
+                                        } else {
+                                            let color = match c.key {
+                                                "state" => torrent_color(t, palette),
+                                                "dlspeed" if t.dlspeed > 0 => palette.blue,
+                                                "upspeed" if t.upspeed > 0 => palette.green,
+                                                _ => ui.visuals().text_color(),
+                                            };
+                                            let text = c.display(t);
+                                            torrent_cell_text(ui, &text, color).on_hover_text(text);
+                                        }
+                                    });
+                                }
+                                let response = row.response();
+                                #[cfg(feature = "ui-smoke")]
+                                if t.hash == "fixture-1" {
+                                    ctx.data_mut(|data| {
+                                        data.insert_temp(
+                                            egui::Id::new("smoke-torrent-row"),
+                                            response.rect.center(),
+                                        )
+                                    });
+                                }
+                                if response.clicked() || response.secondary_clicked() {
+                                    let modifiers = ctx.input(|i| i.modifiers);
+                                    self.selection.click(
+                                        &t.hash,
+                                        &ordered_hashes,
+                                        modifiers.ctrl,
+                                        modifiers.shift,
+                                        response.secondary_clicked(),
+                                    );
+                                    self.selected = if self.selection.hashes.contains(&t.hash) {
+                                        Some(t.hash.clone())
+                                    } else {
+                                        self.selection.hashes.iter().next().cloned()
+                                    };
+                                }
+                                response.context_menu(|ui| {
+                                    ui.set_width(290.0);
+                                    ui.style_mut().override_font_id =
+                                        Some(egui::FontId::proportional(12.0));
+                                    ui.spacing_mut().item_spacing.y = 1.0;
+                                    egui::ScrollArea::vertical()
+                                        .scroll_bar_visibility(
+                                            egui::scroll_area::ScrollBarVisibility::AlwaysVisible,
+                                        )
+                                        .max_height((ctx.screen_rect().height() * 0.8).max(180.0))
+                                        .show(ui, |ui| {
+                                            let hashes = self
+                                                .selection
+                                                .hashes
+                                                .iter()
+                                                .cloned()
+                                                .collect::<Vec<_>>()
+                                                .join("|");
+                                            let count = self.selection.hashes.len();
+                                            ui.weak(format!("Выбрано: {count}"));
+                                            if crate::remote::action_menu_item(
+                                                ui,
+                                                "Запустить",
+                                                crate::ui_icons::PLAY,
+                                                false,
+                                            )
+                                            .clicked()
+                                            {
+                                                let _ =
+                                                    self.tx.send(Command::Start(hashes.clone()));
+                                                ui.close_menu();
+                                            }
+                                            if crate::remote::action_menu_item(
+                                                ui,
+                                                "Остановить",
+                                                3,
+                                                false,
+                                            )
+                                            .clicked()
+                                            {
+                                                let _ = self.tx.send(Command::Stop(hashes.clone()));
+                                                ui.close_menu();
+                                            }
+                                            if crate::remote::action_menu_item(
+                                                ui,
+                                                "Удалить…",
+                                                4,
+                                                false,
+                                            )
+                                            .clicked()
+                                            {
+                                                let names = rows
+                                                    .iter()
+                                                    .filter(|t| {
+                                                        self.selection.hashes.contains(&t.hash)
+                                                    })
+                                                    .map(|t| t.name.clone())
+                                                    .collect::<Vec<_>>()
+                                                    .join("\n");
+                                                self.delete = Some((
+                                                    hashes.clone(),
+                                                    format!("Торрентов: {count}\n{names}"),
+                                                ));
+                                                self.delete_files = false;
+                                                ui.close_menu();
+                                            }
+
+                                            self.remote.torrent_actions(
+                                                ui,
+                                                t,
+                                                &hashes,
+                                                count,
+                                                &self.settings.path_mappings,
+                                            );
+                                            ui.separator();
+                                            self.console.menu(ui);
+                                        });
+                                });
+                            });
+                        });
+                });
+            if let Some((source, target, after)) = column_drop {
+                crate::columns::move_column(
+                    &mut self.settings.visible_columns,
+                    &source,
+                    &target,
+                    after,
+                );
+            }
+            if ctx.input(|i| i.pointer.any_released() || !i.pointer.primary_down()) {
+                self.dragged_column = None;
+            }
+            // TableBuilder applies resizing after body(); capture its final widths next frame.
+            if ctx.input(|i| i.pointer.any_down() || i.pointer.any_released()) {
+                ctx.request_repaint();
+            }
+        });
         self.dialogs(ctx);
         for source in std::mem::take(&mut self.remote.add_sources) {
             self.add_flow.push(source, String::new());
@@ -1529,10 +1572,26 @@ impl eframe::App for ClientApp {
         for command in self.remote.commands() {
             self.send(command);
         }
+        self.collect_console_messages();
+        self.console.show(ctx);
         if self.connected {
             ctx.request_repaint_after(std::time::Duration::from_secs(1));
         }
     }
+}
+
+// Keep background hover-only: a click-sensitive parent overlays the table's row interactions.
+fn torrent_panel(
+    ctx: &egui::Context,
+    contents: impl FnOnce(&mut egui::Ui),
+) -> egui::InnerResponse<()> {
+    egui::CentralPanel::default()
+        .frame(
+            egui::Frame::new()
+                .fill(crate::theme::palette(ctx).surface)
+                .inner_margin(16.0),
+        )
+        .show(ctx, contents)
 }
 
 fn column_header(ui: &mut egui::Ui, title: &str) -> egui::Response {
@@ -1926,7 +1985,7 @@ mod tests {
     }
 
     #[test]
-    fn clicking_torrent_text_selects_the_row() {
+    fn clicking_torrent_text_in_actual_panel_selects_row_and_opens_only_its_menu() {
         for button in [egui::PointerButton::Primary, egui::PointerButton::Secondary] {
             let ctx = egui::Context::default();
             let mut menu_opened = false;
@@ -1952,7 +2011,7 @@ mod tests {
                     ];
                 }
                 let _ = ctx.run(input, |ctx| {
-                    egui::CentralPanel::default().show(ctx, |ui| {
+                    torrent_panel(ctx, |ui| {
                         TableBuilder::new(ui)
                             .sense(egui::Sense::click())
                             .column(Column::initial(400.0))

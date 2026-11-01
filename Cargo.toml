@@ -1,6 +1,6 @@
 [package]
 name = "qbit-remote"
-version = "0.2.52"
+version = "0.2.54"
 edition = "2021"
 description = "Windows desktop client for remote qBittorrent servers"
 

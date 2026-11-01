@@ -211,7 +211,96 @@ impl Api {
             serde_json::json!({"summary":format!("Импорт RSS: сохранено {imported}, пропущено {skipped}")}),
         )
     }
+    fn move_queue(
+        &self,
+        path: &str,
+        fields: &[(String, String)],
+    ) -> Result<serde_json::Value, String> {
+        let hashes = fields
+            .iter()
+            .find(|(key, _)| key == "hashes")
+            .map(|(_, value)| value.as_str())
+            .unwrap_or("");
+        let selected: std::collections::HashSet<_> =
+            hashes.split('|').filter(|s| !s.is_empty()).collect();
+        let before = self.remote_request("torrents/info", &[], false)?;
+        let rows = before
+            .as_array()
+            .ok_or("Не удалось получить очередь сервера")?;
+        let priorities: Vec<_> = rows
+            .iter()
+            .filter_map(|row| {
+                let priority = row["priority"].as_i64()?;
+                (priority > 0).then_some((row["hash"].as_str()?, priority))
+            })
+            .collect();
+        let chosen: Vec<_> = priorities
+            .iter()
+            .filter(|(hash, _)| selected.contains(hash))
+            .copied()
+            .collect();
+        if chosen.is_empty() {
+            return Err("Выбранные торренты не находятся в очереди загрузки. Проверьте включение очереди на сервере.".into());
+        }
+        let up = path == "torrents/increasePrio";
+        let can_move = chosen.iter().any(|(_, position)| {
+            priorities.iter().any(|(hash, other)| {
+                !selected.contains(hash)
+                    && if up {
+                        other < position
+                    } else {
+                        other > position
+                    }
+            })
+        });
+        if !can_move {
+            return Err(if up {
+                "Выделенные торренты уже в начале очереди"
+            } else {
+                "Выделенные торренты уже в конце очереди"
+            }
+            .into());
+        }
+        self.remote_request(path, fields, true)?;
+        for attempt in 0..3 {
+            if attempt > 0 {
+                std::thread::sleep(Duration::from_millis(150));
+            }
+            let after = self.remote_request("torrents/info", &[], false)?;
+            let changed = chosen
+                .iter()
+                .filter(|(hash, old)| {
+                    after.as_array().is_some_and(|rows| {
+                        rows.iter().any(|row| {
+                            row["hash"].as_str() == Some(*hash)
+                                && row["priority"].as_i64().is_some_and(|new| {
+                                    new > 0 && if up { new < *old } else { new > *old }
+                                })
+                        })
+                    })
+                })
+                .count();
+            if changed > 0 {
+                return Ok(
+                    serde_json::json!({"summary": format!("Очередь обновлена: перемещено {changed}")}),
+                );
+            }
+        }
+        Err("Сервер принял команду, но позиции в очереди не изменились. Проверьте очередь в консоли и настройки сервера.".into())
+    }
     fn remote(
+        &self,
+        path: &str,
+        fields: &[(String, String)],
+        post: bool,
+    ) -> Result<serde_json::Value, String> {
+        if post && matches!(path, "torrents/increasePrio" | "torrents/decreasePrio") {
+            self.move_queue(path, fields)
+        } else {
+            self.remote_request(path, fields, post)
+        }
+    }
+    fn remote_request(
         &self,
         path: &str,
         fields: &[(String, String)],
@@ -579,6 +668,83 @@ pub fn worker(ctx: eframe::egui::Context) -> (Sender<Command>, Receiver<(u64, Ev
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn queue_down_changes_priority_and_preserves_all_selected_hashes() {
+        let before =
+            r#"[{"hash":"a","priority":1},{"hash":"b","priority":2},{"hash":"c","priority":3}]"#;
+        let after =
+            r#"[{"hash":"a","priority":2},{"hash":"b","priority":3},{"hash":"c","priority":1}]"#;
+        let (address, server) =
+            mock_server(vec![("200 OK", before), ("200 OK", ""), ("200 OK", after)]);
+        let api = Api {
+            client: Client::new(),
+            base: base_url(&address).unwrap(),
+            modern: true,
+        };
+        let value = api
+            .remote(
+                "torrents/decreasePrio",
+                &[("hashes".into(), "a|b".into())],
+                true,
+            )
+            .unwrap();
+        assert!(value["summary"].as_str().unwrap().contains("2"));
+        let requests = server.join().unwrap();
+        assert!(requests[1].starts_with("POST /api/v2/torrents/decreasePrio"));
+        assert!(requests[1].contains("hashes=a%7Cb"));
+    }
+    #[test]
+    fn queue_boundaries_do_not_report_success_or_send_noop_posts() {
+        for (path, hashes, message) in [
+            ("decreasePrio", "b", "конце"),
+            ("increasePrio", "a", "начале"),
+            ("decreasePrio", "c", "не находятся"),
+        ] {
+            let (address, server) = mock_server(vec![(
+                "200 OK",
+                r#"[{"hash":"a","priority":1},{"hash":"b","priority":2},{"hash":"c","priority":-1}]"#,
+            )]);
+            let api = Api {
+                client: Client::new(),
+                base: base_url(&address).unwrap(),
+                modern: true,
+            };
+            let error = api
+                .remote(
+                    &format!("torrents/{path}"),
+                    &[("hashes".into(), hashes.into())],
+                    true,
+                )
+                .unwrap_err();
+            assert!(error.contains(message), "{error}");
+            assert_eq!(server.join().unwrap().len(), 1);
+        }
+    }
+    #[test]
+    fn queue_accepted_but_unchanged_is_not_success() {
+        let before = r#"[{"hash":"a","priority":1},{"hash":"b","priority":2}]"#;
+        let (address, server) = mock_server(vec![
+            ("200 OK", before),
+            ("200 OK", ""),
+            ("200 OK", before),
+            ("200 OK", before),
+            ("200 OK", before),
+        ]);
+        let api = Api {
+            client: Client::new(),
+            base: base_url(&address).unwrap(),
+            modern: true,
+        };
+        assert!(api
+            .remote(
+                "torrents/decreasePrio",
+                &[("hashes".into(), "a".into())],
+                true
+            )
+            .unwrap_err()
+            .contains("не изменились"));
+        server.join().unwrap();
+    }
     #[test]
     fn invalid_or_all_skipped_plan_sends_no_server_mutations() {
         for priority in [0, 2] {

@@ -5,6 +5,7 @@ mod add_torrent;
 mod api;
 mod app;
 mod columns;
+mod console;
 mod country_flags;
 #[cfg(windows)]
 mod credentials;

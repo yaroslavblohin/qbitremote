@@ -385,30 +385,6 @@ fn initial_height() -> f32 {
     500.0
 }
 
-fn priority_name(p: u8) -> &'static str {
-    match p {
-        0 => "Не скачивать",
-        6 => "Высокий",
-        7 => "Максимальный",
-        _ => "Обычный",
-    }
-}
-
-fn priority_text(palette: crate::theme::Palette, priority: u8) -> egui::RichText {
-    let color = match priority {
-        1 => palette.green,
-        6 => palette.orange,
-        7 => palette.red,
-        _ => palette.muted,
-    };
-    egui::RichText::new(if priority == 255 {
-        "Разный"
-    } else {
-        priority_name(priority)
-    })
-    .color(color)
-}
-
 fn file_area(
     ui: &mut egui::Ui,
     plan: &mut Plan,
@@ -535,7 +511,7 @@ fn file_table(
         let _table=TableBuilder::new(ui).id_salt(("new-torrent-files",id)).striped(true)
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
             .min_scrolled_height(scroll_height).max_scroll_height(scroll_height).auto_shrink([false,false])
-            .column(Column::remainder().at_least(235.0)).column(Column::initial(85.0)).column(Column::initial(125.0))
+            .column(Column::remainder().at_least(235.0)).column(Column::initial(85.0)).column(Column::exact(crate::priority::WIDTH + 8.0))
             .header(21.0,|mut h| {for label in ["Файлы","Размер","Приоритет"]{h.col(|ui| {ui.weak(label);});}})
             .body(|body| {body.rows(22.0,rows.len(),|mut row| {
                 let node_id=rows[row.index()];let node=&tree.nodes[node_id];let state=stats[node_id];let folder=node.file.is_none();
@@ -559,12 +535,11 @@ fn file_table(
                 });
                 row.col(|ui| {ui.label(bytes(node.size));});
                 row.col(|ui| {
-                    let mut priority=state.priority.unwrap_or(255);
-                    egui::ComboBox::from_id_salt(("new-tree-prio",id,node_id)).width(115.0)
-                        .selected_text(priority_text(crate::theme::palette(ui.ctx()),priority)).show_ui(ui,|ui| {
-                            for p in [0,1,6,7]{ui.selectable_value(&mut priority,p,priority_text(crate::theme::palette(ui.ctx()),p));}
-                        }).response.on_hover_text(if folder{"Приоритет применяется ко всем файлам папки, включая скрытые фильтром"}else{"Приоритет файла"});
-                    if Some(priority)!=state.priority&&priority!=255{tree.priority(node_id,files,priority);}
+                    let mut priority=i64::from(state.priority.unwrap_or(255));
+                    crate::priority::combo(ui,("new-tree-prio",id,node_id),&mut priority)
+                        .on_hover_text(if folder{"Приоритет применяется ко всем файлам папки, включая скрытые фильтром"}else{"Приоритет файла"});
+                    if Some(priority as u8)!=state.priority&&priority!=255{tree.priority(node_id,files,priority as u8);}
+
                 });
             });});
         #[cfg(test)]

@@ -6,11 +6,12 @@ use eframe::egui::{self, RichText};
 use egui_extras::{Column, TableBuilder};
 use serde_json::{json, Value};
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::HashMap,
     time::{Duration, Instant},
 };
 mod file_tree;
 mod pages;
+mod preferences;
 
 fn menu_group(ui: &mut egui::Ui, title: &str) {
     let p = crate::theme::palette(ui.ctx());
@@ -149,11 +150,11 @@ pub struct Remote {
     prefs: Option<Value>,
     prefs_original: Option<Value>,
     prefs_filter: String,
+    prefs_group: usize,
     rss_rules: bool,
     log_peers: bool,
     log_filter: String,
-    history: VecDeque<(f32, f32)>,
-    torrent_history: VecDeque<(f32, f32)>,
+    graphs: crate::graphs::Graphs,
 }
 impl Default for Remote {
     fn default() -> Self {
@@ -181,11 +182,11 @@ impl Default for Remote {
             prefs: None,
             prefs_original: None,
             prefs_filter: String::new(),
+            prefs_group: 0,
             rss_rules: false,
             log_peers: false,
             log_filter: String::new(),
-            history: VecDeque::new(),
-            torrent_history: VecDeque::new(),
+            graphs: Default::default(),
         }
     }
 }
@@ -200,7 +201,7 @@ impl Remote {
             Ok("trackers") => 1,
             Ok("peers") => 2,
             Ok("pieces") => 5,
-            Ok("torrent-graph") => 6,
+            Ok("torrent-graph" | "graph-disabled") => 6,
             _ => 0,
         };
         if self.tab == 6 {
@@ -231,9 +232,9 @@ impl Remote {
                 "files/fixture-1",
                 json!([
                     {"name":"Linux/Images/ubuntu.iso", "index":0, "size":6000000000_u64, "progress":0.64, "priority":1, "availability":1.2},
-                    {"name":"Linux/Docs/install.txt", "index":1, "size":12000, "progress":1.0, "priority":1, "availability":2.0},
+                    {"name":"Linux/Docs/install.txt", "index":1, "size":12000, "progress":1.0, "priority":6, "availability":2.0},
                     {"name":"Linux/Docs/cover.png", "index":2, "size":4000, "progress":1.0, "priority":0, "availability":2.0},
-                    {"name":"examples.zip", "index":3, "size":8000, "progress":1.0, "priority":1, "availability":1.0}
+                    {"name":"examples.zip", "index":3, "size":8000, "progress":1.0, "priority":7, "availability":1.0}
                 ]),
             ),
             (
@@ -280,7 +281,7 @@ impl Remote {
             ("build", json!({"qt":"6.x","libtorrent":"2.x"})),
             (
                 "preferences",
-                json!({"dl_limit":0,"up_limit":10485760,"alt_dl_limit":1048576,"alt_up_limit":524288,"scheduler_enabled":false,"save_path":"/downloads","dht":true,"pex":true}),
+                json!({"dl_limit":0,"up_limit":10485760,"alt_dl_limit":1048576,"alt_up_limit":524288,"scheduler_enabled":false,"save_path":"/downloads/complete","temp_path":"/downloads/incomplete","temp_path_enabled":true,"add_stopped_enabled":true,"preallocate_all":false,"incomplete_files_ext":true,"auto_tmm_enabled":false,"add_trackers_enabled":false,"add_trackers":"","add_trackers_url":"","add_trackers_from_url_enabled":false,"listen_port":6881,"upnp":true,"dht":true,"pex":true,"queueing_enabled":true,"max_active_downloads":3,"web_ui_port":8080,"rss_processing_enabled":true,"app_instance_name":"qBittorrent"}),
             ),
         ] {
             self.cache.insert(
@@ -295,20 +296,18 @@ impl Remote {
                 self.prefs_original = Some(value);
             }
         }
-        for i in 0..60 {
-            if self.tab == 6 {
-                push_history(
-                    &mut self.torrent_history,
-                    8_000_000.0 + (i as f32 * 0.3).sin() * 3_000_000.0,
-                    2_000_000.0,
-                );
-            }
-            push_history(
-                &mut self.history,
-                8_000_000.0 + (i as f32 * 0.3).sin() * 3_000_000.0,
-                2_000_000.0,
-            );
+        if (self.tab == 6 || self.page == Page::Speed)
+            && std::env::var("QBIT_SMOKE_PAGE").as_deref() != Ok("graph-disabled")
+        {
+            self.graphs.demo(if self.page == Page::Speed {
+                None
+            } else {
+                Some("fixture-1")
+            });
         }
+    }
+    pub fn sample_torrents(&mut self, torrents: &[Torrent]) {
+        self.graphs.record(torrents);
     }
     pub fn clear(&mut self) {
         self.add_sources.clear();
@@ -321,8 +320,7 @@ impl Remote {
         self.prefs_original = None;
         self.search_id = None;
         self.message.clear();
-        self.history.clear();
-        self.torrent_history.clear();
+        self.graphs.clear_history();
         self.selected_hash.clear();
         self.collapsed_folders.clear();
     }
@@ -395,20 +393,6 @@ impl Remote {
             self.cache.clear();
         } else {
             if let Ok(value) = &result {
-                if pending.key == "transfer" {
-                    push_history(
-                        &mut self.history,
-                        value["dl_info_speed"].as_f64().unwrap_or(0.0) as f32,
-                        value["up_info_speed"].as_f64().unwrap_or(0.0) as f32,
-                    );
-                }
-                if pending.key == format!("properties/{}", self.selected_hash) {
-                    push_history(
-                        &mut self.torrent_history,
-                        value["dl_speed"].as_f64().unwrap_or(0.0) as f32,
-                        value["up_speed"].as_f64().unwrap_or(0.0) as f32,
-                    );
-                }
                 if pending.key == "preferences" && self.prefs.is_none() {
                     self.prefs = Some(value.clone());
                     self.prefs_original = Some(value.clone());
@@ -557,7 +541,6 @@ impl Remote {
             self.selected_hash = hash.clone();
             self.file_filter.clear();
             self.collapsed_folders.clear();
-            self.torrent_history.clear();
         }
         ui.horizontal_wrapped(|ui| {
             for (id, name) in [
@@ -573,6 +556,10 @@ impl Remote {
             }
         });
         ui.separator();
+        if self.tab == 6 {
+            self.graphs.ui(ui, Some(hash));
+            return;
+        }
         let endpoint = match self.tab {
             1 => "torrents/trackers",
             2 => "sync/torrentPeers",
@@ -606,15 +593,24 @@ impl Remote {
                         );
                     }
                 });
-                egui::ScrollArea::vertical()
-                    .id_salt("general")
-                    .show(ui, |ui| {
-                        object_grid(ui, "properties", &data);
-                        ui.collapsing("Дополнительные сведения", |ui| {
-                            let value = serde_json::to_value(&torrent.extra).unwrap_or_default();
-                            object_grid(ui, "extra", &value);
-                        });
-                    });
+                let extra = serde_json::to_value(&torrent.extra).unwrap_or_default();
+                property_scroll_area(ui).show(ui, |ui| {
+                    let label_width = property_label_width(ui, &[&data, &extra]);
+                    property_table(ui, "properties", &data, label_width);
+                    egui::CollapsingHeader::new("Дополнительные сведения")
+                        .id_salt("general-extra")
+                        .open(
+                            if cfg!(feature = "ui-smoke")
+                                && std::env::var("QBIT_SMOKE_PAGE").as_deref()
+                                    == Ok("general-layout")
+                            {
+                                Some(true)
+                            } else {
+                                None
+                            },
+                        )
+                        .show_unindented(ui, |ui| property_table(ui, "extra", &extra, label_width));
+                });
             }
             1 => self.trackers(ui, hash, &data),
             2 => self.peers(ui, hash, &data),
@@ -652,7 +648,7 @@ impl Remote {
                     pieces.iter().filter(|p| p.as_i64() == Some(2)).count()
                 ));
             }
-            _ => speed_graph(ui, &self.torrent_history),
+            _ => {}
         }
     }
     fn limit_button(
@@ -1315,13 +1311,7 @@ impl Remote {
             }
             let mut priority = number(row, "priority");
             let old = priority;
-            egui::ComboBox::from_id_salt(("prio", number(row, "index")))
-                .selected_text(priority_name(priority))
-                .show_ui(ui, |ui| {
-                    for p in [0, 1, 6, 7] {
-                        ui.selectable_value(&mut priority, p, priority_name(p));
-                    }
-                });
+            file_priority_combo(ui, number(row, "index"), &mut priority);
             if old != priority {
                 self.action(
                     "Приоритет файла",
@@ -1561,12 +1551,6 @@ fn peer_address(ip: &str, port: i64) -> String {
         format!("{ip}:{port}")
     }
 }
-fn push_history(history: &mut VecDeque<(f32, f32)>, down: f32, up: f32) {
-    history.push_back((down, up));
-    if history.len() > 120 {
-        history.pop_front();
-    }
-}
 pub fn kib_to_bytes(input: &str) -> Result<i64, String> {
     let n: f64 = input
         .trim()
@@ -1584,47 +1568,10 @@ fn number(v: &Value, key: &str) -> i64 {
 fn text(v: &Value, key: &str) -> String {
     v[key].as_str().unwrap_or("").to_string()
 }
-fn priority_name(p: i64) -> &'static str {
-    match p {
-        0 => "Не скачивать",
-        6 => "Высокий",
-        7 => "Максимальный",
-        _ => "Обычный",
-    }
+fn file_priority_combo(ui: &mut egui::Ui, index: i64, priority: &mut i64) -> egui::Response {
+    crate::priority::combo(ui, ("prio", index), priority)
 }
-fn speed_graph(ui: &mut egui::Ui, history: &VecDeque<(f32, f32)>) {
-    ui.label("История текущего запуска · скачивание / отдача · обновление раз в 5 секунд");
-    let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), 150.0),
-        egui::Sense::hover(),
-    );
-    let peak = history
-        .iter()
-        .flat_map(|(a, b)| [*a, *b])
-        .fold(1.0_f32, f32::max);
-    ui.painter()
-        .rect_filled(rect, 4.0, crate::theme::palette(ui.ctx()).input);
-    for (idx, color) in [
-        (0, crate::theme::palette(ui.ctx()).blue),
-        (1, crate::theme::palette(ui.ctx()).green),
-    ] {
-        let points: Vec<_> = history
-            .iter()
-            .enumerate()
-            .map(|(i, (a, b))| {
-                egui::pos2(
-                    rect.left() + i as f32 * rect.width() / 119.0,
-                    rect.bottom() - (if idx == 0 { *a } else { *b }) / peak * rect.height(),
-                )
-            })
-            .collect();
-        if points.len() > 1 {
-            ui.painter()
-                .add(egui::Shape::line(points, egui::Stroke::new(1.0_f32, color)));
-        }
-    }
-    ui.label(format!("Верхняя граница: {}/с", bytes(peak as u64)));
-}
+
 fn data_table(
     ui: &mut egui::Ui,
     id: &str,
@@ -1684,6 +1631,93 @@ fn data_table(
             });
     });
 }
+fn property_scroll_area(ui: &mut egui::Ui) -> egui::ScrollArea {
+    ui.spacing_mut().scroll.floating = false;
+    let area = egui::ScrollArea::vertical()
+        .id_salt("general")
+        .max_width(ui.available_width())
+        .max_height((ui.clip_rect().bottom() - ui.next_widget_position().y).max(40.0))
+        .auto_shrink([false, false])
+        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible);
+    #[cfg(feature = "ui-smoke")]
+    if std::env::var("QBIT_SMOKE_PAGE").as_deref() == Ok("general-layout") {
+        return area.vertical_scroll_offset(220.0);
+    }
+    area
+}
+fn property_label_width(ui: &egui::Ui, values: &[&Value]) -> f32 {
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let longest = values
+        .iter()
+        .filter_map(|v| v.as_object())
+        .flat_map(|map| map.keys())
+        .map(|key| {
+            ui.painter()
+                .layout_no_wrap(label(key).into(), font.clone(), egui::Color32::WHITE)
+                .size()
+                .x
+        })
+        .fold(140.0_f32, f32::max);
+    (longest + 12.0).min(ui.available_width() * 0.45)
+}
+fn property_table(ui: &mut egui::Ui, id: &str, value: &Value, label_width: f32) {
+    let Some(map) = value.as_object() else {
+        return;
+    };
+    let palette = crate::theme::palette(ui.ctx());
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    for (index, (key, value)) in map.iter().enumerate() {
+        let text = format_value(key, value);
+        let width = ui.available_width();
+        let value_width = (width - label_width - 20.0).max(1.0);
+        let text_height = ui
+            .painter()
+            .layout(text.clone(), font.clone(), palette.text, value_width)
+            .size()
+            .y;
+        let height = text_height.max(ui.text_style_height(&egui::TextStyle::Body)) + 4.0;
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
+        if index % 2 == 0 {
+            ui.painter().rect_filled(rect, 2.0, palette.stripe);
+        }
+        let label_rect = egui::Rect::from_min_max(
+            rect.min + egui::vec2(4.0, 2.0),
+            egui::pos2(rect.left() + label_width, rect.bottom() - 2.0),
+        );
+        let value_rect = egui::Rect::from_min_max(
+            egui::pos2(rect.left() + label_width + 16.0, rect.top() + 2.0),
+            rect.max - egui::vec2(4.0, 2.0),
+        );
+        ui.scope_builder(
+            egui::UiBuilder::new()
+                .id_salt((id, key, "label"))
+                .max_rect(label_rect)
+                .layout(egui::Layout::top_down(egui::Align::LEFT)),
+            |ui| {
+                ui.add(
+                    egui::Label::new(egui::RichText::new(label(key)).color(palette.muted))
+                        .truncate(),
+                )
+                .on_hover_text(label(key));
+            },
+        );
+        ui.scope_builder(
+            egui::UiBuilder::new()
+                .id_salt((id, key, "value"))
+                .max_rect(value_rect)
+                .layout(egui::Layout::top_down(egui::Align::LEFT)),
+            |ui| {
+                ui.add(egui::Label::new(&text).wrap()).context_menu(|ui| {
+                    if ui.button("Копировать").clicked() {
+                        ui.ctx().copy_text(text.clone());
+                        ui.close_menu();
+                    }
+                });
+            },
+        );
+    }
+}
+
 fn object_grid(ui: &mut egui::Ui, id: &str, value: &Value) {
     if let Some(map) = value.as_object() {
         egui::Grid::new(id)
@@ -1839,6 +1873,118 @@ fn label(key: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn property_sections_share_column_bounds_and_scroll_at_right_edge() {
+        for scale in [1.0, 1.25, 1.5, 2.0] {
+            for width in [430.0, 900.0, 1600.0] {
+                let ctx = egui::Context::default();
+                ctx.set_zoom_factor(scale);
+                let main = json!({"save_path":"main-value", "up_speed_avg":0});
+                let extra = json!({"comment":"extra-value", "long":"x".repeat(1000)});
+                let mut left = 0.0;
+                let mut right = 0.0;
+                let output = ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(width * scale, 500.0 * scale),
+                        )),
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        egui::CentralPanel::default().show(ctx, |ui| {
+                            left = ui.available_rect_before_wrap().left();
+                            right = ui.available_rect_before_wrap().right();
+                            let result = property_scroll_area(ui).show(ui, |ui| {
+                                let label_width = property_label_width(ui, &[&main, &extra]);
+                                property_table(ui, "main", &main, label_width);
+                                property_table(ui, "extra", &extra, label_width);
+                            });
+                            assert!((result.inner_rect.left() - left).abs() < 1.0);
+                            assert!(
+                                (right - result.inner_rect.right()).abs() < 24.0,
+                                "scrollbar must be at panel edge"
+                            );
+                            assert!(
+                                result.content_size.x <= result.inner_rect.width() + 1.0,
+                                "long text must wrap"
+                            );
+                        });
+                    },
+                );
+                let find = |name| {
+                    output
+                        .shapes
+                        .iter()
+                        .find_map(|shape| match &shape.shape {
+                            egui::Shape::Text(text) if text.galley.text() == name => {
+                                Some(text.pos.x)
+                            }
+                            _ => None,
+                        })
+                        .unwrap()
+                };
+                assert!((find("main-value") - find("extra-value")).abs() < 0.1);
+                let stripes: Vec<_> = output
+                    .shapes
+                    .iter()
+                    .filter_map(|shape| match &shape.shape {
+                        egui::Shape::Rect(rect)
+                            if rect.fill == crate::theme::Theme::Graphite.palette().stripe =>
+                        {
+                            Some(rect.rect)
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                assert!(stripes.len() >= 2);
+                assert!(stripes
+                    .iter()
+                    .all(|rect| (rect.left() - left).abs() < 1.0 && right - rect.right() < 24.0));
+            }
+        }
+    }
+    #[test]
+    fn file_priority_buttons_have_fixed_size_and_centered_labels_at_hidpi() {
+        for scale in [1.0, 1.25, 1.5, 2.0] {
+            let ctx = egui::Context::default();
+            ctx.set_zoom_factor(scale);
+            let mut buttons = Vec::new();
+            let output = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(600.0 * scale, 400.0 * scale),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        for (index, mut priority) in [0, 1, 6, 7].into_iter().enumerate() {
+                            let response = file_priority_combo(ui, index as i64, &mut priority);
+                            buttons.push((crate::priority::name(priority), response.rect));
+                        }
+                    });
+                },
+            );
+            for (name, rect) in &buttons {
+                assert!((rect.width() - 136.0).abs() < 0.1);
+                assert!((rect.height() - buttons[0].1.height()).abs() < 0.1);
+                let text = output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::Shape::Text(text) if text.galley.text() == *name => Some(text),
+                        _ => None,
+                    })
+                    .expect("priority label");
+                let label = egui::Rect::from_min_size(text.pos, text.galley.size());
+                assert!((label.center().x - rect.center().x).abs() < 0.1);
+                assert!((label.center().y - rect.center().y).abs() < 0.1);
+                assert!(rect.contains_rect(label));
+            }
+        }
+    }
     #[test]
     fn opening_results_are_silent_except_errors_and_preserve_other_notices() {
         use super::*;

@@ -141,6 +141,16 @@ impl ClientApp {
                 ..Default::default()
             },
         ];
+        if std::env::var("QBIT_SMOKE_PAGE").as_deref() == Ok("general-layout") {
+            self.torrents[0].extra = serde_json::from_value(serde_json::json!({
+                "added_on": 1793653200_i64,
+                "availability": 1.2,
+                "comment": "https://example.org/torrents/linux-desktop-release-notes",
+                "infohash_v1": "0123456789abcdef0123456789abcdef01234567",
+                "save_path": "/downloads/complete/Linux"
+            }))
+            .unwrap();
+        }
         self.selected = Some("fixture-1".into());
         self.selection.hashes.insert("fixture-1".into());
         if std::env::var_os("QBIT_SMOKE_MULTI").is_some() {
@@ -474,6 +484,7 @@ impl ClientApp {
                     self.selection.clear();
                 }
                 Event::Torrents(torrents) => {
+                    self.remote.sample_torrents(&torrents);
                     self.torrents = torrents;
                     let available = self
                         .torrents
@@ -1677,7 +1688,7 @@ fn details_panel(
                     .on_hover_text("Скрыть панель информации (Esc)")
                     .clicked();
             });
-            egui::ScrollArea::both()
+            egui::ScrollArea::vertical()
                 .id_salt("details-content")
                 .auto_shrink([false, false])
                 .show(ui, contents);

@@ -97,7 +97,7 @@ impl Remote {
                 }
             });
             egui::ScrollArea::vertical().show(ui, |ui| {
-                speed_graph(ui, &self.history);
+                self.graphs.ui(ui, None);
                 object_grid(ui, "transfer-info", &info);
                 ui.label("Альтернативные лимиты и расписание доступны в настройках сервера.");
                 if let Some(build) = self.get("build", "app/buildInfo", vec![]) {
@@ -375,36 +375,14 @@ impl Remote {
             self.loading(ui, "preferences");
             return;
         };
-        ui.label("Параметры удалённого qBittorrent. Изменения вступают в силу после сохранения.");
-        ui.horizontal(|ui|{
-            ui.add(egui::TextEdit::singleline(&mut self.prefs_filter).hint_text("Найти параметр"));
+        ui.weak("Изменения параметров сервера применяются после сохранения.");
+        ui.horizontal_wrapped(|ui|{
+            ui.add(egui::TextEdit::singleline(&mut self.prefs_filter).desired_width(260.0).hint_text("Найти параметр во всех разделах…"));
             let diff=preference_diff(self.prefs_original.as_ref().unwrap_or(&Value::Null),&prefs);
             if ui.add_enabled(diff.as_object().is_some_and(|m|!m.is_empty()),egui::Button::new("Сохранить")).clicked(){self.open_form("Сохранить настройки","app/setPreferences",vec![("json".into(),diff.to_string())],vec![],"Применить изменённые параметры сервера? Настройки Web UI и сети могут изменить доступность подключения.");}
             if ui.button("Отменить изменения").clicked(){prefs=self.prefs_original.clone().unwrap_or_default();}
         });
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            if let Some(map) = prefs.as_object_mut() {
-                for (key, value) in map {
-                    if !key
-                        .to_lowercase()
-                        .contains(&self.prefs_filter.to_lowercase())
-                        && !label(key)
-                            .to_lowercase()
-                            .contains(&self.prefs_filter.to_lowercase())
-                    {
-                        continue;
-                    }
-                    ui.push_id(key, |ui| {
-                        ui.horizontal_wrapped(|ui| {
-                            ui.add_sized([260.0, 24.0], egui::Label::new(label(key)))
-                                .on_hover_text(key);
-                            edit_value(ui, key, value);
-                        });
-                    });
-                    ui.separator();
-                }
-            }
-        });
+        preferences::render(ui, &mut prefs, &mut self.prefs_group, &self.prefs_filter);
         self.prefs = Some(prefs);
     }
     fn rss_page(&mut self, ui: &mut egui::Ui) {

@@ -10,9 +10,11 @@ mod country_flags;
 #[cfg(windows)]
 mod credentials;
 mod file_icons;
+mod graphs;
 mod icon;
 mod model;
 mod path_mapping;
+mod priority;
 mod remote;
 mod rss_rules;
 mod selection;

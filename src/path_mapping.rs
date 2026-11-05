@@ -12,7 +12,7 @@ pub fn settings_ui(ui: &mut eframe::egui::Ui, mappings: &mut Vec<PathMapping>) {
     egui::CollapsingHeader::new("Сопоставление папок сервера с этим компьютером")
         .default_open(cfg!(feature = "ui-smoke") && std::env::var("QBIT_SMOKE_PAGE").as_deref() == Ok("path-mappings"))
         .show(ui, |ui| {
-        ui.label("Для открытия файлов и папок из вкладки «Файлы». Сетевой ресурс должен быть доступен в Windows.");
+        ui.label("Для открытия файлов и папок из вкладки «Файлы». Сетевой ресурс должен быть подключён к этому компьютеру.");
         ui.weak("Пример: /downloads → Z:\\Downloads или \\\\NAS\\Downloads. Правила относятся только к выбранному профилю и сохраняются автоматически.");
         let mut remove = None;
         for (index, mapping) in mappings.iter_mut().enumerate() {
@@ -55,6 +55,9 @@ fn server_parts(path: &str) -> Result<(bool, Vec<String>), String> {
 }
 
 fn safe_component(part: &str) -> bool {
+    if cfg!(target_os = "macos") {
+        return !part.is_empty() && part != "." && part != ".." && !part.contains(['/', '\0']);
+    }
     let stem = part.split('.').next().unwrap_or("").to_ascii_uppercase();
     !part.is_empty()
         && part != "."
@@ -70,6 +73,19 @@ fn safe_component(part: &str) -> bool {
 impl PathMapping {
     pub fn validate(&self) -> Result<(), String> {
         server_parts(&self.server)?;
+        if cfg!(target_os = "macos") {
+            return if self.local.starts_with('/')
+                && self
+                    .local
+                    .split('/')
+                    .filter(|s| !s.is_empty())
+                    .all(safe_component)
+            {
+                Ok(())
+            } else {
+                Err("Укажите абсолютный путь macOS, например /Volumes/NAS/Downloads".into())
+            };
+        }
         let local = self.local.replace('/', "\\");
         let drive = local.as_bytes().get(1) == Some(&b':')
             && local
@@ -136,7 +152,11 @@ pub fn resolve(
     let (mapping, count) = best
         .ok_or("Нет сопоставления этого пути. Добавьте его в настройках подключения к серверу.")?;
     mapping.validate()?;
-    let mut result = PathBuf::from(mapping.local.replace('/', "\\"));
+    let mut result = PathBuf::from(if cfg!(target_os = "macos") {
+        mapping.local.clone()
+    } else {
+        mapping.local.replace('/', "\\")
+    });
     for part in &target[count..] {
         if !safe_component(part) {
             return Err("Имя файла несовместимо с путями Windows".into());
@@ -241,11 +261,23 @@ pub fn open(path: &std::path::Path) -> Result<(), String> {
         }
         Ok(())
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        let status = std::process::Command::new("/usr/bin/open")
+            .arg(path)
+            .status()
+            .map_err(|e| e.to_string())?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!("Не удалось открыть путь: {status}"))
+        }
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     Err("Открытие доступно только в Windows".into())
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod tests {
     use super::*;
     #[cfg(windows)]
@@ -424,5 +456,23 @@ mod tests {
             "Z:\\qbit-remote-nonexistent-test\\missing"
         ))
         .is_err());
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod macos_tests {
+    use super::*;
+    #[test]
+    fn mounted_volume_paths_and_traversal() {
+        let mappings = vec![PathMapping {
+            server: "/downloads".into(),
+            local: "/Volumes/NAS/Downloads".into(),
+        }];
+        assert_eq!(
+            resolve(&mappings, "/downloads/complete", "Music/song.flac").unwrap(),
+            PathBuf::from("/Volumes/NAS/Downloads/complete/Music/song.flac")
+        );
+        assert!(resolve(&mappings, "/downloads", "../private").is_err());
+        assert!(resolve(&mappings, "/downloads-other", "file").is_err());
     }
 }

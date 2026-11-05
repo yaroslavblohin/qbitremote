@@ -9,6 +9,9 @@ mod console;
 mod country_flags;
 #[cfg(windows)]
 mod credentials;
+#[cfg(target_os = "macos")]
+#[path = "macos_credentials.rs"]
+mod credentials;
 mod file_icons;
 mod graphs;
 mod icon;
@@ -21,22 +24,25 @@ mod selection;
 mod server_space;
 #[cfg(windows)]
 mod single_instance;
-#[cfg(feature = "ui-smoke")]
+#[cfg(all(feature = "ui-smoke", windows))]
 mod smoke;
 mod status_bar;
 mod theme;
 #[cfg(windows)]
 mod tray;
+#[cfg(target_os = "macos")]
+#[path = "macos_tray.rs"]
+mod tray;
 mod ui_icons;
 
 fn main() -> eframe::Result {
-    #[cfg(feature = "ui-smoke")]
+    #[cfg(all(feature = "ui-smoke", windows))]
     if std::env::var_os("QBIT_IMPORT_BRANDING").is_some() {
         icon::import_branding();
         return Ok(());
     }
 
-    #[cfg(feature = "ui-smoke")]
+    #[cfg(all(feature = "ui-smoke", windows))]
     if std::env::var_os("QBIT_EXPORT_BRANDING").is_some() {
         icon::export_branding();
         return Ok(());
@@ -83,7 +89,7 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "qBit Remote",
         eframe::NativeOptions {
-            #[cfg(feature = "ui-smoke")]
+            #[cfg(all(feature = "ui-smoke", windows))]
             persistence_path: Some(std::path::PathBuf::from("dist/ui-smoke-state.ron")),
             viewport: eframe::egui::ViewportBuilder::default()
                 .with_icon(icon::window())
@@ -94,7 +100,7 @@ fn main() -> eframe::Result {
         Box::new(move |cc| {
             let mut app = app::ClientApp::new(cc);
             app.open_files(launch_files);
-            #[cfg(feature = "ui-smoke")]
+            #[cfg(all(feature = "ui-smoke", windows))]
             let app = smoke::SmokeApp::new(app);
             Ok(Box::new(app))
         }),

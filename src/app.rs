@@ -40,16 +40,16 @@ pub struct ClientApp {
     delete_files: bool,
     sort: usize,
     descending: bool,
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     tray: Option<crate::tray::Tray>,
 }
 impl ClientApp {
-    #[cfg(feature = "ui-smoke")]
+    #[cfg(all(feature = "ui-smoke", windows))]
     pub fn smoke_tray_control(&mut self) -> crate::tray::WindowControl {
         self.settings.close_to_tray = true;
         self.tray.as_ref().expect("tray required").control.clone()
     }
-    #[cfg(feature = "ui-smoke")]
+    #[cfg(all(feature = "ui-smoke", windows))]
     pub fn smoke_fixture(&mut self) {
         if std::env::var_os("QBIT_SMOKE_COLUMNS").is_some() {
             self.settings.visible_columns = crate::columns::COLUMNS
@@ -115,6 +115,7 @@ impl ClientApp {
                 size: 6_000_000_000,
                 progress: 0.64,
                 dlspeed: 12_450_000,
+                upspeed: 420_000,
                 state: "downloading".into(),
                 category: "Linux".into(),
                 save_path: "D:/Downloads/Linux".into(),
@@ -208,7 +209,7 @@ impl ClientApp {
         settings.zoom = settings.zoom.clamp(0.8, 1.5);
         ctx.set_zoom_factor(settings.zoom);
         let (tx, rx) = api::worker(ctx.clone());
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "macos"))]
         let (tray, tray_error) = match crate::tray::Tray::new(cc) {
             Ok(tray) => (Some(tray), None),
             Err(e) => (None, Some(format!("Системный трей недоступен: {e}"))),
@@ -254,13 +255,13 @@ impl ClientApp {
             delete_files: false,
             sort,
             descending,
-            #[cfg(windows)]
+            #[cfg(any(windows, target_os = "macos"))]
             tray,
         }
         .with_tray_notice(
-            #[cfg(windows)]
+            #[cfg(any(windows, target_os = "macos"))]
             tray_error.or(password_error),
-            #[cfg(not(windows))]
+            #[cfg(not(any(windows, target_os = "macos")))]
             None,
         );
         if auto_connect {
@@ -676,7 +677,7 @@ impl ClientApp {
                         }
                     }
                 }
-                ui.small("Пароль защищён учётной записью Windows.");
+                ui.small("Пароль защищён системным хранилищем текущего пользователя.");
                 crate::path_mapping::settings_ui(ui, &mut self.settings.path_mappings);
                 ui.checkbox(
                     &mut self.settings.auto_connect,
@@ -891,7 +892,7 @@ impl ClientApp {
                     ui.separator();
                     if ui.button("Выход").clicked() {
                         ui.close_menu();
-                        #[cfg(windows)]
+                        #[cfg(any(windows, target_os = "macos"))]
                         if let Some(tray) = &self.tray {
                             tray.control.exit();
                             return;
@@ -1042,7 +1043,7 @@ impl eframe::App for ClientApp {
             self.settings.theme.apply(ctx);
         }
         let palette = self.settings.theme.palette();
-        #[cfg(feature = "ui-smoke")]
+        #[cfg(all(feature = "ui-smoke", windows))]
         ctx.set_zoom_factor(self.settings.zoom);
         self.receive();
         self.receive_activation(ctx);
@@ -1050,7 +1051,7 @@ impl eframe::App for ClientApp {
             self.send(command);
         }
         // Mirror native tray changes into eframe's cached viewport visibility.
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "macos"))]
         if let Some(visible) = self
             .tray
             .as_ref()
@@ -1062,7 +1063,7 @@ impl eframe::App for ClientApp {
             }
             ctx.request_repaint();
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "macos"))]
         if crate::tray::should_hide(
             ctx.input(|i| i.viewport().close_requested()),
             self.settings.close_to_tray,
@@ -1448,7 +1449,7 @@ impl eframe::App for ClientApp {
                                     });
                                 }
                                 let response = row.response();
-                                #[cfg(feature = "ui-smoke")]
+                                #[cfg(all(feature = "ui-smoke", windows))]
                                 if t.hash == "fixture-1" {
                                     ctx.data_mut(|data| {
                                         data.insert_temp(
@@ -1462,7 +1463,7 @@ impl eframe::App for ClientApp {
                                     self.selection.click(
                                         &t.hash,
                                         &ordered_hashes,
-                                        modifiers.ctrl,
+                                        modifiers.command,
                                         modifiers.shift,
                                         response.secondary_clicked(),
                                     );

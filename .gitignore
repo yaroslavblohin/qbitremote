@@ -3,3 +3,5 @@
 /dist_backup/
 /.reference/
 *.log
+
+/dist-macos/

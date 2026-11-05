@@ -275,7 +275,7 @@ impl Remote {
             ),
             (
                 "transfer",
-                json!({"dl_info_speed":12450000,"up_info_speed":2100000,"dl_rate_limit":0,"up_rate_limit":10485760,"dht_nodes":320,"connection_status":"connected"}),
+                json!({"dl_info_speed":12450000,"up_info_speed":2520000,"dl_rate_limit":0,"up_rate_limit":10485760,"dht_nodes":320,"connection_status":"connected"}),
             ),
             ("speed-mode", json!(0)),
             ("build", json!({"qt":"6.x","libtorrent":"2.x"})),

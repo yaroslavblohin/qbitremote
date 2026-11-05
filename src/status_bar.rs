@@ -171,12 +171,25 @@ fn paint(ui: &mut egui::Ui, state: &State<'_>) -> [Rect; 5] {
     };
     let text = if width >= 820.0 && !state.server.is_empty() {
         format!(
-            "{status}  ·  {}  ·  Windows {}",
+            "{status}  ·  {}  ·  {} {}",
             state.server,
+            if cfg!(target_os = "macos") {
+                "macOS"
+            } else {
+                "Windows"
+            },
             env!("CARGO_PKG_VERSION")
         )
     } else {
-        format!("{status}  ·  Windows {}", env!("CARGO_PKG_VERSION"))
+        format!(
+            "{status}  ·  {} {}",
+            if cfg!(target_os = "macos") {
+                "macOS"
+            } else {
+                "Windows"
+            },
+            env!("CARGO_PKG_VERSION")
+        )
     };
     let clipped = painter.with_clip_rect(connection);
     clipped.circle_filled(

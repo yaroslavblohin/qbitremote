@@ -1,4 +1,4 @@
-# macOS — экспериментальный порт 0.2.63
+# macOS — экспериментальный порт (состояние в 0.2.76)
 
 На Mac установите Xcode Command Line Tools (`xcode-select --install`) и Rust stable. Из корня проекта выполните `cargo test --locked`, затем `bash scripts/build-macos.sh`. Результат: `dist-macos/qBit Remote.app` и ZIP для архитектуры текущего Mac (Apple Silicon или Intel). CI содержит отдельные задания для обеих архитектур.
 

@@ -129,7 +129,7 @@ impl Torrent {
             "downloading" => "Загрузка",
             "uploading" => "Раздача",
             "stalledDL" => "Ожидание пиров",
-            "stalledUP" => "Раздача · ожидание",
+            "stalledUP" => "Ожидание",
             "pausedDL" | "pausedUP" | "stoppedDL" | "stoppedUP" => "Остановлен",
             "error" => "Ошибка",
             "missingFiles" => "Нет файлов",

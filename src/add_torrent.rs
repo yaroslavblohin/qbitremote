@@ -213,7 +213,7 @@ impl AddFlow {
                     path: d.path.clone(),
                     category: String::new(),
                     tags: String::new(),
-                    start: false,
+                    start: true,
                     top: false,
                     sequential: false,
                 });
@@ -406,9 +406,13 @@ fn file_area(
         72.0
     } else {
         48.0
-    } + if committing { 21.0 } else { 0.0 };
+    } + ui.spacing().item_spacing.y
+        + if committing { 21.0 } else { 0.0 };
     let footer = egui::TopBottomPanel::bottom(egui::Id::new(("add-torrent-footer", id)))
-        .frame(egui::Frame::NONE)
+        .frame(egui::Frame::NONE.inner_margin(egui::Margin {
+            top: ui.spacing().item_spacing.y.round() as i8,
+            ..Default::default()
+        }))
         .show_separator_line(false)
         .exact_height(height)
         .show_inside(ui, |ui| {
@@ -680,7 +684,7 @@ mod tests {
                     panic!("Selected files were lost with empty search")
                 };
                 assert_eq!(plan.metadata.files.len(), 12);
-                assert!(!plan.start);
+                assert!(plan.start);
                 assert!(plan.metadata.files.iter().all(|f| f.priority == 1));
             }
         }
@@ -862,6 +866,8 @@ mod tests {
         let _ = flow.tick(true);
         flow.prepared(flow.serial, Ok(metadata()));
         let plan = flow.current.as_mut().unwrap().plan.as_mut().unwrap();
+        assert!(plan.start);
+        plan.start = false;
         plan.metadata.files[0].priority = 6;
         plan.metadata.files[1].priority = 0;
         plan.metadata.files[2].priority = 7;

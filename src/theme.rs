@@ -13,6 +13,7 @@ pub enum Theme {
 #[derive(Clone, Copy)]
 pub struct Palette {
     pub muted: Color32,
+    pub waiting: Color32,
     pub accent: Color32,
     pub blue: Color32,
     pub green: Color32,
@@ -49,6 +50,7 @@ impl Theme {
         match self {
             Self::White => Palette {
                 muted: c(105, 110, 118),
+                waiting: c(24, 117, 112),
                 accent: c(48, 108, 151),
                 blue: c(49, 105, 166),
                 green: c(49, 117, 78),
@@ -70,6 +72,7 @@ impl Theme {
             },
             Self::Marine => Palette {
                 muted: c(146, 163, 184),
+                waiting: c(64, 199, 191),
                 accent: c(64, 199, 191),
                 blue: c(84, 169, 255),
                 green: c(87, 211, 150),
@@ -91,6 +94,7 @@ impl Theme {
             },
             Self::Graphite => Palette {
                 muted: c(160, 160, 166),
+                waiting: c(64, 199, 191),
                 accent: c(64, 196, 255),
                 blue: c(73, 157, 255),
                 green: c(67, 215, 132),

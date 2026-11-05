@@ -1438,6 +1438,9 @@ impl eframe::App for ClientApp {
                                             torrent_progress(ui, t);
                                         } else {
                                             let color = match c.key {
+                                                "state" if t.state == "stalledUP" => {
+                                                    palette.waiting
+                                                }
                                                 "state" => torrent_color(t, palette),
                                                 "dlspeed" if t.dlspeed > 0 => palette.blue,
                                                 "upspeed" if t.upspeed > 0 => palette.green,

@@ -1,6 +1,6 @@
 [package]
 name = "qbit-remote"
-version = "0.2.77"
+version = "0.2.78"
 edition = "2021"
 description = "Desktop client for remote qBittorrent servers"
 

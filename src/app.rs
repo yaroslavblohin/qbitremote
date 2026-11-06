@@ -522,6 +522,16 @@ impl ClientApp {
             _ => true,
         }
     }
+    fn matches_listing(t: &Torrent, filter: usize, query: &str) -> bool {
+        Self::matches_filter(t, filter) && t.name.to_lowercase().contains(query)
+    }
+    fn visible_count(torrents: &[Torrent], filter: usize, search: &str) -> usize {
+        let query = search.to_lowercase();
+        torrents
+            .iter()
+            .filter(|t| Self::matches_listing(t, filter, &query))
+            .count()
+    }
     fn server_picker(&mut self, ui: &mut egui::Ui, id: &str) {
         let mut selected = self.settings.selected_server;
         egui::ComboBox::from_id_salt(id)
@@ -1180,18 +1190,18 @@ impl eframe::App for ClientApp {
                 self.remote.page_ui(ui, &mut self.settings.path_mappings);
                 return;
             }
-            ui.horizontal(|ui| {
-                ui.heading(
-                    [
-                        "Все торренты",
-                        "Загрузка",
-                        "Раздача",
-                        "Остановлены",
-                        "Ошибки",
-                    ][self.filter],
-                );
-                ui.label(RichText::new(self.torrents.len().to_string()).color(palette.muted));
-            });
+            torrent_heading(
+                ui,
+                [
+                    "Все торренты",
+                    "Загрузка",
+                    "Раздача",
+                    "Остановлены",
+                    "Ошибки",
+                ][self.filter],
+                Self::visible_count(&self.torrents, self.filter, &self.search),
+                self.filter,
+            );
             ui.add_space(8.0);
             ui.horizontal_wrapped(|ui| {
                 ui.add_sized(
@@ -1285,9 +1295,7 @@ impl eframe::App for ClientApp {
             let mut rows: Vec<_> = self
                 .torrents
                 .iter()
-                .filter(|t| {
-                    Self::matches_filter(t, self.filter) && t.name.to_lowercase().contains(&query)
-                })
+                .filter(|t| Self::matches_listing(t, self.filter, &query))
                 .collect();
             rows.sort_by(|a, b| {
                 let order = crate::columns::COLUMNS[self.sort].compare(a, b);
@@ -1699,6 +1707,18 @@ fn details_panel(
     (panel.response.rect.height(), close)
 }
 
+fn torrent_heading(ui: &mut egui::Ui, title: &str, count: usize, filter: usize) {
+    let count_color = crate::ui_icons::color(filter, crate::theme::palette(ui.ctx()));
+    ui.horizontal(|ui| {
+        ui.heading(title);
+        ui.label(
+            RichText::new(count.to_string())
+                .heading()
+                .color(count_color),
+        );
+    });
+}
+
 fn navigation_row(
     ui: &mut egui::Ui,
     label: &str,
@@ -1755,7 +1775,7 @@ fn navigation_row(
             badge.center(),
             egui::Align2::CENTER_CENTER,
             count,
-            egui::FontId::proportional(12.0),
+            egui::FontId::proportional(13.0),
             color,
         );
     }
@@ -1931,6 +1951,101 @@ fn torrent_progress(ui: &mut egui::Ui, torrent: &Torrent) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn heading_count_follows_filter_and_case_insensitive_search() {
+        let torrents = vec![
+            Torrent {
+                name: "Ubuntu".into(),
+                progress: 0.5,
+                state: "downloading".into(),
+                ..Default::default()
+            },
+            Torrent {
+                name: "Архив".into(),
+                progress: 1.0,
+                state: "uploading".into(),
+                ..Default::default()
+            },
+            Torrent {
+                name: "АРХИВ запасной".into(),
+                progress: 1.0,
+                state: "stalledUP".into(),
+                ..Default::default()
+            },
+            Torrent {
+                name: "Stopped".into(),
+                progress: 1.0,
+                state: "stoppedUP".into(),
+                ..Default::default()
+            },
+            Torrent {
+                name: "Broken".into(),
+                state: "error".into(),
+                ..Default::default()
+            },
+        ];
+        for (filter, search, expected) in [
+            (0, "", 5),
+            (1, "ubuntu", 1),
+            (2, "", 2),
+            (2, "аРхИв", 2),
+            (2, "запасной", 1),
+            (3, "", 1),
+            (4, "", 1),
+            (2, "missing", 0),
+        ] {
+            assert_eq!(
+                ClientApp::visible_count(&torrents, filter, search),
+                expected
+            );
+        }
+        assert_eq!(ClientApp::visible_count(&[], 2, ""), 0);
+    }
+    #[test]
+    fn counts_use_matching_fonts_and_section_colors() {
+        for theme in crate::theme::Theme::ALL {
+            for scale in [1.0, 1.25, 1.5, 2.0] {
+                let ctx = egui::Context::default();
+                theme.apply(&ctx);
+                ctx.set_zoom_factor(scale);
+                let output = ctx.run(egui::RawInput::default(), |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        torrent_heading(ui, "Раздача", 7, 2);
+                        navigation_row(ui, "Все торренты", 56, 2, false);
+                    });
+                });
+                let font = |label: &str| {
+                    output
+                        .shapes
+                        .iter()
+                        .find_map(|s| match &s.shape {
+                            egui::Shape::Text(t) if t.galley.text() == label => {
+                                Some(t.galley.job.sections[0].format.font_id.clone())
+                            }
+                            _ => None,
+                        })
+                        .unwrap()
+                };
+                assert_eq!(font("Раздача"), font("7"));
+                assert_eq!(font("Все торренты"), font("56"));
+                let text_color = |label: &str| {
+                    output
+                        .shapes
+                        .iter()
+                        .find_map(|s| match &s.shape {
+                            egui::Shape::Text(t) if t.galley.text() == label => {
+                                Some(t.galley.job.sections[0].format.color)
+                            }
+                            _ => None,
+                        })
+                        .unwrap()
+                };
+                assert_eq!(text_color("7"), text_color("56"));
+                assert_eq!(text_color("7"), crate::ui_icons::color(2, theme.palette()));
+            }
+        }
+    }
+
     #[test]
     fn header_blank_area_clicks_and_drag_does_not_click() {
         for drag in [false, true] {

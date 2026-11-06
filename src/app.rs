@@ -950,18 +950,6 @@ impl ClientApp {
                         }
                     });
                     self.column_picker(ui);
-                    ui.menu_button("Масштаб интерфейса", |ui| {
-                        if ui
-                            .add(egui::Slider::new(&mut self.settings.zoom, 0.8..=1.5).suffix("×"))
-                            .changed()
-                        {
-                            ctx.set_zoom_factor(self.settings.zoom);
-                        }
-                        if ui.button("100%").clicked() {
-                            self.settings.zoom = 1.0;
-                            ctx.set_zoom_factor(1.0);
-                        }
-                    });
                     ui.separator();
                     for (page, title) in crate::remote::PAGES {
                         if page == crate::remote::Page::Preferences {

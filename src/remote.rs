@@ -9,6 +9,7 @@ use std::{
     collections::HashMap,
     time::{Duration, Instant},
 };
+mod comment_links;
 mod file_tree;
 mod pages;
 mod preferences;
@@ -1670,11 +1671,16 @@ fn property_table(ui: &mut egui::Ui, id: &str, value: &Value, label_width: f32) 
         let text = format_value(key, value);
         let width = ui.available_width();
         let value_width = (width - label_width - 20.0).max(1.0);
-        let text_height = ui
-            .painter()
-            .layout(text.clone(), font.clone(), palette.text, value_width)
-            .size()
-            .y;
+        let comment = (key == "comment").then(|| comment_links::layout(ui, &text, value_width));
+        let text_height = comment.as_ref().map_or_else(
+            || {
+                ui.painter()
+                    .layout(text.clone(), font.clone(), palette.text, value_width)
+                    .size()
+                    .y
+            },
+            |galley| galley.size().y,
+        );
         let height = text_height.max(ui.text_style_height(&egui::TextStyle::Body)) + 4.0;
         let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
         if index % 2 == 0 {
@@ -1707,6 +1713,10 @@ fn property_table(ui: &mut egui::Ui, id: &str, value: &Value, label_width: f32) 
                 .max_rect(value_rect)
                 .layout(egui::Layout::top_down(egui::Align::LEFT)),
             |ui| {
+                if let Some(galley) = comment {
+                    comment_links::show(ui, &text, galley);
+                    return;
+                }
                 ui.add(egui::Label::new(&text).wrap()).context_menu(|ui| {
                     if ui.button("Копировать").clicked() {
                         ui.ctx().copy_text(text.clone());

@@ -128,6 +128,7 @@ impl Torrent {
         match self.state.as_str() {
             "downloading" => "Загрузка",
             "uploading" => "Раздача",
+            "moving" => "Перемещение",
             "stalledDL" => "Ожидание пиров",
             "stalledUP" => "Ожидание",
             "pausedDL" | "pausedUP" | "stoppedDL" | "stoppedUP" => "Остановлен",

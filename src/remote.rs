@@ -235,9 +235,9 @@ impl Remote {
             (
                 "files/fixture-1",
                 json!([
-                    {"name":"Linux/Images/ubuntu.iso", "index":0, "size":6000000000_u64, "progress":0.64, "priority":1, "availability":1.2},
-                    {"name":"Linux/Docs/install.txt", "index":1, "size":12000, "progress":1.0, "priority":6, "availability":2.0},
-                    {"name":"Linux/Docs/cover.png", "index":2, "size":4000, "progress":1.0, "priority":0, "availability":2.0},
+                    {"name":"Linux/Images/ubuntu.iso", "index":0, "size":6000000000_u64, "progress":0.64, "priority":1, "availability":0.8},
+                    {"name":"Linux/Docs/install.txt", "index":1, "size":12000, "progress":1.0, "priority":6, "availability":1.0},
+                    {"name":"Linux/Docs/cover.png", "index":2, "size":4000, "progress":1.0, "priority":0, "availability":1.0},
                     {"name":"examples.zip", "index":3, "size":8000, "progress":1.0, "priority":7, "availability":1.0}
                 ]),
             ),
@@ -1543,7 +1543,8 @@ fn file_tree_table(
                             ui.label(format_value("progress", &file["progress"]));
                         });
                         row.col(|ui| {
-                            ui.label(format_value("availability", &file["availability"]));
+                            let (value, hint) = file_availability(file);
+                            ui.label(value).on_hover_text(hint);
                         });
                         row.col(|ui| {
                             ui.horizontal(|ui| action(ui, file));
@@ -1761,6 +1762,20 @@ fn object_grid(ui: &mut egui::Ui, id: &str, value: &Value) {
             });
     }
 }
+// File availability is a fraction; torrent availability is a distributed-copy count.
+fn file_availability(file: &Value) -> (String, &'static str) {
+    if file["__folder"].as_bool() == Some(true) {
+        return ("—".into(), "Доступность для папки не рассчитывается.");
+    }
+    match file["availability"].as_f64().filter(|n| n.is_finite() && *n >= 0.0) {
+        Some(value) => (
+            format!("{:.1}%", value.min(1.0) * 100.0),
+            "Доля частей файла, доступных по текущим сведениям сервера. Это не прогресс загрузки.",
+        ),
+        None => ("—".into(), "Нет данных о доступности частей файла от сервера. Это не означает, что файл отсутствует."),
+    }
+}
+
 fn format_value(key: &str, value: &Value) -> String {
     if value.is_null() {
         return "—".into();
@@ -1897,6 +1912,24 @@ fn label(key: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn file_availability_distinguishes_unknown_zero_and_folder_without_changing_copy_counts() {
+        for value in [json!(-1), Value::Null, json!("unknown")] {
+            let (label, hint) = file_availability(&json!({"availability":value,"progress":1.0}));
+            assert_eq!(label, "—");
+            assert!(hint.starts_with("Нет данных"));
+        }
+        for (value, expected) in [(0.0, "0.0%"), (0.75, "75.0%"), (1.0, "100.0%")] {
+            let (label, hint) = file_availability(&json!({"availability":value}));
+            assert_eq!(label, expected);
+            assert!(hint.contains("не прогресс"));
+        }
+        let (label, hint) = file_availability(&json!({"__folder":true}));
+        assert_eq!(label, "—");
+        assert!(hint.contains("для папки"));
+        assert_eq!(format_value("availability", &json!(1.25)), "1.25");
+    }
+
     #[test]
     fn property_sections_share_column_bounds_and_scroll_at_right_edge() {
         for scale in [1.0, 1.25, 1.5, 2.0] {

@@ -13,34 +13,19 @@ pub fn window() -> eframe::egui::IconData {
 /// Full demoscene lockup, centered as one image so icon and wordmark stay aligned.
 pub fn header(ui: &mut eframe::egui::Ui) {
     use eframe::egui;
-    let id = egui::Id::new("brand-lockup");
-    let texture = ui
-        .ctx()
-        .data(|data| data.get_temp::<egui::TextureHandle>(id))
-        .unwrap_or_else(|| {
-            let image = image::load_from_memory(include_bytes!("../assets/brand-lockup.png"))
-                .expect("Invalid brand lockup")
-                .thumbnail(1024, 1024)
-                .to_rgba8();
-            let texture = ui.ctx().load_texture(
-                "brand-lockup",
-                egui::ColorImage::from_rgba_unmultiplied(
-                    [image.width() as usize, image.height() as usize],
-                    image.as_raw(),
-                ),
-                egui::TextureOptions::LINEAR,
-            );
-            ui.ctx()
-                .data_mut(|data| data.insert_temp(id, texture.clone()));
-            texture
-        });
+    let source = brand_source(
+        ui.ctx(),
+        "brand-lockup",
+        include_bytes!("../assets/brand-lockup.png"),
+    );
     let (area, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), 110.0),
         egui::Sense::hover(),
     );
-    let aspect = texture.size()[0] as f32 / texture.size()[1] as f32;
+    let aspect = source.width() as f32 / source.height() as f32;
     let width = area.width().min(area.height() * aspect);
     let rect = egui::Rect::from_center_size(area.center(), egui::vec2(width, width / aspect));
+    let texture = scaled_texture(ui.ctx(), "brand-lockup", &source, rect.size());
     ui.painter().image(
         texture.id(),
         rect,
@@ -55,31 +40,108 @@ pub fn header(ui: &mut eframe::egui::Ui) {
 /// Embedded, cached presentation: does not depend on files beside the EXE.
 pub fn presentation(ui: &mut eframe::egui::Ui) {
     use eframe::egui;
-    let id = egui::Id::new("about-presentation");
-    let texture = ui
-        .ctx()
-        .data(|data| data.get_temp::<egui::TextureHandle>(id))
-        .unwrap_or_else(|| {
-            let image = image::load_from_memory(include_bytes!("../assets/brand-presentation.png"))
-                .expect("Invalid embedded presentation")
-                .to_rgba8();
-            let size = [image.width() as usize, image.height() as usize];
-            let texture = ui.ctx().load_texture(
-                "about-presentation",
-                egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw()),
-                egui::TextureOptions::LINEAR,
-            );
-            ui.ctx()
-                .data_mut(|data| data.insert_temp(id, texture.clone()));
-            texture
-        });
+    let source = brand_source(
+        ui.ctx(),
+        "about-presentation",
+        include_bytes!("../assets/brand-presentation.png"),
+    );
     let width = ui.available_width().min(560.0);
-    let height = width * texture.size()[1] as f32 / texture.size()[0] as f32;
+    let height = width * source.height() as f32 / source.width() as f32;
+    let texture = scaled_texture(
+        ui.ctx(),
+        "about-presentation",
+        &source,
+        egui::vec2(width, height),
+    );
     ui.add(
         egui::Image::new(&texture)
             .fit_to_exact_size(egui::vec2(width, height))
             .corner_radius(6),
     );
+}
+
+// Decode once; resample only when the physical display size (including DPI) changes.
+fn brand_source(
+    ctx: &eframe::egui::Context,
+    name: &str,
+    bytes: &[u8],
+) -> std::sync::Arc<image::RgbaImage> {
+    let id = eframe::egui::Id::new((name, "source"));
+    if let Some(source) = ctx.data(|data| data.get_temp::<std::sync::Arc<image::RgbaImage>>(id)) {
+        return source;
+    }
+    let source = std::sync::Arc::new(
+        image::load_from_memory(bytes)
+            .expect("Invalid brand image")
+            .to_rgba8(),
+    );
+    ctx.data_mut(|data| data.insert_temp(id, source.clone()));
+    source
+}
+
+fn scaled_texture(
+    ctx: &eframe::egui::Context,
+    name: &str,
+    source: &image::RgbaImage,
+    logical: eframe::egui::Vec2,
+) -> eframe::egui::TextureHandle {
+    use eframe::egui;
+    let size = [
+        (logical.x * ctx.pixels_per_point()).ceil().max(1.0) as u32,
+        (logical.y * ctx.pixels_per_point()).ceil().max(1.0) as u32,
+    ];
+    let id = egui::Id::new((name, "scaled"));
+    if let Some((previous, texture)) =
+        ctx.data(|data| data.get_temp::<([u32; 2], egui::TextureHandle)>(id))
+    {
+        if previous == size {
+            return texture;
+        }
+    }
+    let pixels = resample(source, size);
+    let texture = ctx.load_texture(
+        name,
+        egui::ColorImage::from_rgba_unmultiplied(
+            [size[0] as usize, size[1] as usize],
+            pixels.as_raw(),
+        ),
+        egui::TextureOptions::LINEAR,
+    );
+    ctx.data_mut(|data| data.insert_temp(id, (size, texture.clone())));
+    texture
+}
+
+fn resample(source: &image::RgbaImage, size: [u32; 2]) -> image::RgbaImage {
+    // Filter premultiplied colors to avoid dark fringes around transparent contours.
+    let premultiplied = image::Rgba32FImage::from_fn(source.width(), source.height(), |x, y| {
+        let pixel = source.get_pixel(x, y);
+        let alpha = pixel[3] as f32 / 255.0;
+        image::Rgba([
+            pixel[0] as f32 / 255.0 * alpha,
+            pixel[1] as f32 / 255.0 * alpha,
+            pixel[2] as f32 / 255.0 * alpha,
+            alpha,
+        ])
+    });
+    let filtered = image::imageops::resize(
+        &premultiplied,
+        size[0],
+        size[1],
+        image::imageops::FilterType::Lanczos3,
+    );
+    image::RgbaImage::from_fn(size[0], size[1], |x, y| {
+        let p = filtered.get_pixel(x, y);
+        let alpha = p[3].clamp(0.0, 1.0);
+        if alpha <= 0.0 {
+            return image::Rgba([0; 4]);
+        }
+        image::Rgba([
+            ((p[0] / alpha).clamp(0.0, 1.0) * 255.0).round() as u8,
+            ((p[1] / alpha).clamp(0.0, 1.0) * 255.0).round() as u8,
+            ((p[2] / alpha).clamp(0.0, 1.0) * 255.0).round() as u8,
+            (alpha * 255.0).round() as u8,
+        ])
+    })
 }
 
 #[cfg(feature = "ui-smoke")]
@@ -192,6 +254,24 @@ pub fn import_branding() {
 mod tests {
     use super::*;
     use eframe::egui;
+    #[test]
+    fn downsampling_keeps_transparent_edges_smooth_without_dark_fringes() {
+        let source = image::RgbaImage::from_fn(64, 64, |x, y| {
+            if x > y {
+                image::Rgba([255, 0, 0, 255])
+            } else {
+                image::Rgba([0; 4])
+            }
+        });
+        let result = resample(&source, [19, 19]);
+        let edges: Vec<_> = result.pixels().filter(|p| p[3] > 0 && p[3] < 255).collect();
+        assert!(!edges.is_empty());
+        for pixel in edges {
+            assert_eq!(pixel[0], 255);
+            assert_eq!([pixel[1], pixel[2]], [0, 0]);
+        }
+    }
+
     #[test]
     fn visible_header_artwork_is_centered_at_different_scales_and_widths() {
         for zoom in [1.0, 1.5, 2.0] {

@@ -35,6 +35,13 @@ mod tray;
 mod tray;
 mod ui_icons;
 
+// RTSS's per-executable opt-out. Exported as DATA by build.rs, before OpenGL starts.
+// https://github.com/beeradmoore/RTSSHooksCompatibility-sample
+#[cfg(windows)]
+#[no_mangle]
+#[used]
+pub static RTSSHooksCompatibility: u32 = 0;
+
 fn main() -> eframe::Result {
     #[cfg(all(feature = "ui-smoke", windows))]
     if std::env::var_os("QBIT_IMPORT_BRANDING").is_some() {

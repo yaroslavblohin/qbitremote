@@ -13,6 +13,17 @@ fn main() {
         return;
     }
     let out = PathBuf::from(env::var_os("OUT_DIR").unwrap());
+    if env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
+        println!("cargo:rustc-link-arg-bin=qbit-remote=/EXPORT:RTSSHooksCompatibility,DATA");
+    } else {
+        let definition = out.join("rtss.def");
+        fs::write(&definition, "EXPORTS\nRTSSHooksCompatibility DATA\n").unwrap();
+        println!(
+            "cargo:rustc-link-arg-bin=qbit-remote={}",
+            definition.display()
+        );
+    }
+
     fs::write(out.join("app.ico"), icon()).unwrap();
     fs::write(out.join("app.rc"), "1 ICON \"app.ico\"\n").unwrap();
     let compiler = resource_compiler();

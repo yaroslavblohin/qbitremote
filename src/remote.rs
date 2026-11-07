@@ -1805,6 +1805,32 @@ fn format_value(key: &str, value: &Value) -> String {
     if let Some(s) = value.as_str() {
         return if s.is_empty() { "—".into() } else { s.into() };
     }
+    if matches!(
+        key,
+        "max_ratio"
+            | "max_seeding_time"
+            | "max_inactive_seeding_time"
+            | "ratio_limit"
+            | "seeding_time_limit"
+            | "inactive_seeding_time_limit"
+    ) {
+        return match value.as_f64() {
+            Some(-1.0) => "Без ограничения".into(),
+            Some(-2.0) => "По настройкам сервера".into(),
+            Some(n) if n.is_finite() && n >= 0.0 => value.to_string(),
+            _ => "—".into(),
+        };
+    }
+    if matches!(
+        key,
+        "dl_limit" | "up_limit" | "dl_rate_limit" | "up_rate_limit"
+    ) && value.as_f64().is_some_and(|n| n <= 0.0)
+    {
+        return "Без ограничения".into();
+    }
+    if value.as_f64().is_some_and(|n| n < 0.0) {
+        return "—".into();
+    }
     if key == "progress" {
         return format!("{:.1}%", value.as_f64().unwrap_or(0.0) * 100.0);
     }
@@ -1834,9 +1860,6 @@ fn format_value(key: &str, value: &Value) -> String {
         } else {
             format!("{} д {} ч {} мин", n / 86400, n / 3600 % 24, n / 60 % 60)
         };
-    }
-    if key.ends_with("limit") && value.as_i64().is_some_and(|n| n <= 0) {
-        return "Без ограничения".into();
     }
     if key.contains("speed")
         || matches!(
@@ -1931,6 +1954,40 @@ fn label(key: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn unknown_properties_and_share_limit_sentinels_are_distinct() {
+        for key in [
+            "max_ratio",
+            "max_seeding_time",
+            "max_inactive_seeding_time",
+            "ratio_limit",
+            "seeding_time_limit",
+            "inactive_seeding_time_limit",
+        ] {
+            assert_eq!(format_value(key, &json!(-1)), "Без ограничения");
+            assert_eq!(format_value(key, &json!(-1.0)), "Без ограничения");
+            assert_eq!(format_value(key, &json!(-2)), "По настройкам сервера");
+            assert_eq!(format_value(key, &json!(-3)), "—");
+            assert_eq!(format_value(key, &Value::Null), "—");
+            assert_eq!(format_value(key, &json!(0)), "0");
+            assert_eq!(format_value(key, &json!(2.5)), "2.5");
+        }
+        for key in [
+            "priority",
+            "peers_total",
+            "unknown_field",
+            "unknown_limit",
+            "share_ratio",
+        ] {
+            assert_eq!(format_value(key, &json!(-1)), "—");
+            assert_eq!(format_value(key, &json!(-1.0)), "—");
+            assert_eq!(format_value(key, &json!(0)), "0");
+        }
+        assert_eq!(format_value("dl_limit", &json!(0)), "Без ограничения");
+        assert_eq!(format_value("dl_limit", &json!(-1)), "Без ограничения");
+        assert_eq!(format_value("dl_limit", &json!(1024)), "1.0 КиБ/с");
+    }
+
     #[test]
     fn torrent_availability_keeps_copy_units_and_unknown_is_not_zero_or_progress() {
         for value in [json!(-1), Value::Null, json!("unknown")] {

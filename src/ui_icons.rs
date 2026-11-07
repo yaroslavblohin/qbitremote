@@ -24,10 +24,10 @@ pub const ERROR: usize = 32;
 
 pub fn color(kind: usize, p: crate::theme::Palette) -> Color32 {
     match kind {
-        1 | 4 | BOTTOM | REMOVE_TAG | DOWNLOAD_LIMIT | ERROR => p.red,
+        4 | BOTTOM | REMOVE_TAG | ERROR => p.red,
         2 | PLAY | TOP | FORCE | SEED | ADD_TAG | UPLOAD_LIMIT => p.green,
         3 | 7 | 10 | 11 | CATEGORY | RENAME | MOVE | SHARE_LIMIT => p.orange,
-        5 | 6 | VERIFY | TRACKERS | EXPORT => p.blue,
+        1 | 5 | 6 | VERIFY | TRACKERS | EXPORT | DOWNLOAD_LIMIT => p.blue,
         _ => p.muted,
     }
 }

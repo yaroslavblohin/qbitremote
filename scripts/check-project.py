@@ -74,7 +74,7 @@ for file in ['README.md', 'Release/README.md', 'CHANGELOG.md']:
 for file in list((ROOT/'src').rglob('*.rs')) + [ROOT/'build.rs']:
     for target in re.findall(r'include_(?:bytes|str)!\("([^"\n]+)"\)', file.read_text(encoding='utf-8')):
         require((file.parent/target).is_file(), f'Missing embedded resource: {file}: {target}')
-for target in ['assets/brand-suffix.png','assets/brand-forest.png','assets/logo-master.png',
+for target in ['assets/brand-lockup-source.png','assets/brand-forest.png','assets/logo-master.png',
                '.github/workflows/windows.yml','.github/workflows/macos.yml','scripts/build-macos.sh']:
     require((ROOT/target).is_file(), f'Missing required input: {target}')
 for file in (ROOT/'assets').rglob('*.png'):

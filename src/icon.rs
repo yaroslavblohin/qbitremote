@@ -256,62 +256,11 @@ pub fn import_branding() {
         )
         .unwrap();
     }
-    // Dedicated suffix: trim transparent padding only, never crop letter geometry.
-    let source = image::open("assets/brand-suffix.png").unwrap().to_rgba8();
-    let mut bounds = (source.width(), source.height(), 0, 0);
-    for (x, y, pixel) in source.enumerate_pixels() {
-        if pixel[3] > 0 {
-            bounds.0 = bounds.0.min(x);
-            bounds.1 = bounds.1.min(y);
-            bounds.2 = bounds.2.max(x);
-            bounds.3 = bounds.3.max(y);
-        }
-    }
-    let text = image::imageops::crop_imm(
-        &source,
-        bounds.0,
-        bounds.1,
-        bounds.2 - bounds.0 + 1,
-        bounds.3 - bounds.1 + 1,
-    )
-    .to_image();
-    let text = image::imageops::resize(&text, 700, 230, image::imageops::FilterType::Lanczos3);
-    let icon = image::RgbaImage::from_raw(900, 900, rgba(900)).unwrap();
-    // Trim transparent padding so the suffix sits directly beside the monogram.
-    let mut bounds = (900, 900, 0, 0);
-    for (x, y, pixel) in icon.enumerate_pixels() {
-        if pixel[3] > 0 {
-            bounds.0 = bounds.0.min(x);
-            bounds.1 = bounds.1.min(y);
-            bounds.2 = bounds.2.max(x);
-            bounds.3 = bounds.3.max(y);
-        }
-    }
-    let icon = image::imageops::crop_imm(
-        &icon,
-        bounds.0,
-        bounds.1,
-        bounds.2 - bounds.0 + 1,
-        bounds.3 - bounds.1 + 1,
-    )
-    .to_image();
-    let y = (icon.height() - text.height()) / 2;
-    // Match actual contours row by row, rather than their transparent rectangles.
-    let mut text_x = 0_i64;
-    for row in 0..text.height() {
-        let right = (0..icon.width()).rfind(|&x| icon.get_pixel(x, y + row)[3] > 16);
-        let left = (0..text.width()).find(|&x| text.get_pixel(x, row)[3] > 16);
-        if let (Some(right), Some(left)) = (right, left) {
-            text_x = text_x.max(right as i64 + 1 + 12 - left as i64);
-        }
-    }
-    let mut lockup = image::RgbaImage::new(
-        (text_x as u32 + text.width()).max(icon.width()),
-        icon.height(),
-    );
-    image::imageops::overlay(&mut lockup, &icon, 0, 0);
-    image::imageops::overlay(&mut lockup, &text, text_x, y as i64);
-    lockup.save("assets/brand-lockup.png").unwrap();
+    // Preserve the approved artwork verbatim; small application icons remain qb-only.
+    let lockup = image::open("assets/brand-lockup-source.png")
+        .unwrap()
+        .to_rgba8();
+    std::fs::copy("assets/brand-lockup-source.png", "assets/brand-lockup.png").unwrap();
     let mut forest = image::open("assets/brand-forest.png").unwrap().to_rgba8();
     let width = (forest.width() as f32 * 0.90) as u32;
     let height = width * lockup.height() / lockup.width();
@@ -331,6 +280,19 @@ pub fn import_branding() {
 mod tests {
     use super::*;
     use eframe::egui;
+    #[test]
+    fn approved_lockup_is_preserved_with_transparency() {
+        let source = include_bytes!("../assets/brand-lockup-source.png");
+        assert_eq!(
+            source.as_slice(),
+            include_bytes!("../assets/brand-lockup.png").as_slice()
+        );
+        let image = image::load_from_memory(source).unwrap().to_rgba8();
+        assert!(image.width() > image.height() * 2);
+        assert!(image.pixels().any(|pixel| pixel[3] == 0));
+        assert!(image.pixels().any(|pixel| pixel[3] == 255));
+    }
+
     #[test]
     fn downsampling_keeps_transparent_edges_smooth_without_dark_fringes() {
         let source = image::RgbaImage::from_fn(64, 64, |x, y| {

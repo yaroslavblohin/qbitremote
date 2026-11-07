@@ -1730,7 +1730,11 @@ fn property_table(ui: &mut egui::Ui, id: &str, value: &Value, label_width: f32) 
                     comment_links::show(ui, &text, galley);
                     return;
                 }
-                ui.add(egui::Label::new(&text).wrap()).context_menu(|ui| {
+                let mut response = ui.add(egui::Label::new(&text).wrap());
+                if key == "availability" {
+                    response = response.on_hover_text(torrent_availability_hint(value));
+                }
+                response.context_menu(|ui| {
                     if ui.button("Копировать").clicked() {
                         ui.ctx().copy_text(text.clone());
                         ui.close_menu();
@@ -1776,7 +1780,22 @@ fn file_availability(file: &Value) -> (String, &'static str) {
     }
 }
 
+fn torrent_availability_hint(value: &Value) -> &'static str {
+    if value.as_f64().is_some_and(|n| n.is_finite() && n >= 0.0) {
+        "Число распределённых копий торрента по текущим сведениям сервера. Одна копия может состоять из частей у разных пиров. Это не процент загрузки."
+    } else {
+        "Нет данных о доступности торрента от сервера. Это не означает, что скачанные файлы отсутствуют."
+    }
+}
+
 fn format_value(key: &str, value: &Value) -> String {
+    if key == "availability" {
+        return if value.as_f64().is_some_and(|n| n.is_finite() && n >= 0.0) {
+            value.to_string()
+        } else {
+            "—".into()
+        };
+    }
     if value.is_null() {
         return "—".into();
     }
@@ -1912,6 +1931,19 @@ fn label(key: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn torrent_availability_keeps_copy_units_and_unknown_is_not_zero_or_progress() {
+        for value in [json!(-1), Value::Null, json!("unknown")] {
+            assert_eq!(format_value("availability", &value), "—");
+            assert!(torrent_availability_hint(&value).starts_with("Нет данных"));
+        }
+        for (value, expected) in [(json!(0), "0"), (json!(0.75), "0.75"), (json!(2.5), "2.5")] {
+            assert_eq!(format_value("availability", &value), expected);
+            assert!(torrent_availability_hint(&value).contains("распределённых копий"));
+        }
+        assert_eq!(file_availability(&json!({"availability":0.75})).0, "75.0%");
+    }
+
     #[test]
     fn file_availability_distinguishes_unknown_zero_and_folder_without_changing_copy_counts() {
         for value in [json!(-1), Value::Null, json!("unknown")] {

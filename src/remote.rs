@@ -1280,9 +1280,7 @@ impl Remote {
             );
             let open_folder = ui
                 .add_sized(egui::vec2(26.0, 20.0), egui::Button::new(""))
-                .on_hover_text(
-                    "Открыть папку загрузки\nЧерез сопоставление путей выбранного сервера",
-                );
+                .on_hover_text("Открыть папку торрента\nДля одиночного файла — содержащую папку");
             crate::file_icons::paint_open_folder(
                 ui.painter(),
                 egui::Rect::from_center_size(open_folder.rect.center(), egui::vec2(20.0, 16.0)),
@@ -1291,11 +1289,12 @@ impl Remote {
                 egui::WidgetInfo::labeled(
                     egui::WidgetType::Button,
                     ui.is_enabled(),
-                    "Открыть папку загрузки",
+                    "Открыть папку торрента",
                 )
             });
             if open_folder.clicked() {
-                self.open_mapped(mappings, &torrent.save_path, "", false);
+                let path = crate::path_mapping::torrent_path(mappings, torrent);
+                self.start_open(path, crate::path_mapping::OpenMode::Folder);
             }
 
             if ui.button("Развернуть всё").clicked() {

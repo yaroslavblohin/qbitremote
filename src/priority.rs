@@ -1,5 +1,6 @@
 use eframe::egui;
 pub const WIDTH: f32 = 136.0;
+const FONT_SIZE: f32 = 13.0;
 pub fn name(priority: i64) -> &'static str {
     match priority {
         0 => "Не скачивать",
@@ -20,7 +21,7 @@ fn color(palette: crate::theme::Palette, priority: i64) -> egui::Color32 {
 pub fn combo(ui: &mut egui::Ui, id: impl std::hash::Hash, priority: &mut i64) -> egui::Response {
     ui.scope(|ui| {
         // Both callers use the file-manager geometry, regardless of a dialog's compact text style.
-        ui.style_mut().override_font_id = Some(egui::FontId::proportional(14.0));
+        ui.style_mut().override_font_id = Some(egui::FontId::proportional(FONT_SIZE));
         ui.spacing_mut().button_padding = egui::vec2(4.0, 1.0);
         ui.spacing_mut().interact_size.y = 18.0;
         ui.spacing_mut().icon_width = 14.0;
@@ -37,7 +38,9 @@ pub fn combo(ui: &mut egui::Ui, id: impl std::hash::Hash, priority: &mut i64) ->
                             ui.selectable_value(
                                 priority,
                                 value,
-                                egui::RichText::new(name(value)).color(color(palette, value)),
+                                egui::RichText::new(name(value))
+                                    .font(egui::FontId::proportional(FONT_SIZE))
+                                    .color(color(palette, value)),
                             );
                         }
                     },
@@ -48,7 +51,7 @@ pub fn combo(ui: &mut egui::Ui, id: impl std::hash::Hash, priority: &mut i64) ->
             response.rect.center(),
             egui::Align2::CENTER_CENTER,
             name(*priority),
-            egui::FontId::proportional(14.0),
+            egui::FontId::proportional(FONT_SIZE),
             if ui.is_enabled() {
                 color(palette, *priority)
             } else {
@@ -139,6 +142,7 @@ mod tests {
         let mut button = egui::Pos2::ZERO;
         let mut option = egui::Pos2::ZERO;
         let mut size = egui::Vec2::ZERO;
+        let mut selected_font = None;
         for frame in 0..6 {
             let mut input = egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
@@ -169,6 +173,15 @@ mod tests {
                     assert_eq!(response.rect.size(), size);
                 });
             });
+            if frame == 0 {
+                selected_font = output.shapes.iter().find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.text() == name(255) => {
+                        Some(text.galley.job.sections[0].format.font_id.clone())
+                    }
+                    _ => None,
+                });
+                assert_eq!(selected_font, Some(egui::FontId::proportional(FONT_SIZE)));
+            }
             if frame == 3 {
                 let labels: Vec<_> = output
                     .shapes
@@ -187,6 +200,10 @@ mod tests {
                 assert_eq!(labels.len(), 4);
                 let center = labels[0].pos.x + labels[0].galley.size().x / 2.0;
                 for (label, value) in labels.iter().zip([0, 1, 6, 7]) {
+                    assert_eq!(
+                        Some(label.galley.job.sections[0].format.font_id.clone()),
+                        selected_font
+                    );
                     assert!(
                         (label.pos.x + label.galley.size().x / 2.0 - center).abs() < 0.6,
                         "all priority options must share a horizontal center"

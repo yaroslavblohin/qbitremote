@@ -273,11 +273,11 @@ impl Remote {
             ),
             (
                 "properties/fixture-1",
-                json!({"save_path":"/downloads/Linux","total_size":6000000000_u64,"total_downloaded":3840000000_u64,"total_uploaded":23000000,"dl_speed":12450000,"up_speed":120000,"dl_limit":0,"up_limit":1048576,"seeds":24,"peers":8,"pieces_num":1500,"pieces_have":960,"share_ratio":0.006,"comment":"Материалы: https://example.org/torrent/ubuntu"}),
+                json!({"save_path":"/downloads/Linux","total_size":crate::graphs::demo::SIZE,"total_downloaded":crate::graphs::demo::DOWNLOADED,"total_uploaded":crate::graphs::demo::UPLOADED,"dl_speed":crate::graphs::demo::DOWN,"up_speed":crate::graphs::demo::UP,"dl_limit":0,"up_limit":0,"seeds":24,"peers":8,"pieces_num":1500,"pieces_have":960,"share_ratio":crate::graphs::demo::UPLOADED as f64 / crate::graphs::demo::DOWNLOADED as f64,"comment":"Материалы: https://example.org/torrent/ubuntu"}),
             ),
             (
                 "transfer",
-                json!({"dl_info_speed":12450000,"up_info_speed":2520000,"dl_rate_limit":0,"up_rate_limit":10485760,"dht_nodes":320,"connection_status":"connected"}),
+                json!({"dl_info_speed":crate::graphs::demo::DOWN,"up_info_speed":crate::graphs::demo::UP+crate::graphs::demo::SEED_UP,"dl_rate_limit":0,"up_rate_limit":0,"dht_nodes":320,"connection_status":"connected"}),
             ),
             ("speed-mode", json!(0)),
             ("build", json!({"qt":"6.x","libtorrent":"2.x"})),

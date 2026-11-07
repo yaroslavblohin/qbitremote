@@ -1,3 +1,5 @@
+#[cfg(feature = "ui-smoke")]
+pub(crate) mod demo;
 use crate::model::{bytes, Torrent};
 use eframe::egui;
 use std::{collections::HashMap, time::Instant};
@@ -128,64 +130,22 @@ impl Graphs {
     #[cfg(feature = "ui-smoke")]
     pub fn demo(&mut self, hash: Option<&str>) {
         self.set_enabled_at(hash, true, 0.0);
-        // Repeatable synthetic traffic: peer churn, recovery and correlated jitter.
-        // This fixture is compiled only for documentation screenshots.
-        let mut seed = 0x51a7_92d3_u32;
-        let mut noise = || {
-            seed ^= seed << 13;
-            seed ^= seed >> 17;
-            seed ^= seed << 5;
-            f64::from(seed) / f64::from(u32::MAX) - 0.5
-        };
-        let mut down = 0.0_f64;
-        let mut up = 0.0_f64;
-        let mut seeding = 0.0_f64;
-        for i in 0..200 {
-            let target = match i {
-                0..=14 => 12_000_000.0 * i as f64 / 15.0,
-                15..=62 => 12_000_000.0,
-                63..=69 => 4_800_000.0,
-                70..=104 => 11_500_000.0,
-                105..=132 => 9_400_000.0,
-                133..=137 => 2_600_000.0,
-                _ => 12_300_000.0,
-            };
-            down += (target - down) * 0.42;
-            down = (down + noise() * 1_650_000.0).max(0.0);
-            let upload_target = if (88..112).contains(&i) {
-                900_000.0
-            } else {
-                440_000.0
-            };
-            up = (up + (upload_target - up) * 0.23 + noise() * 210_000.0).max(0.0);
-            let seed_target = if (42..57).contains(&i) {
-                650_000.0
-            } else {
-                2_100_000.0
-            };
-            seeding = (seeding + (seed_target - seeding) * 0.3 + noise() * 450_000.0).max(0.0);
-            // End at the live values displayed by the demo table and status bar.
-            if i >= 195 {
-                let remaining = (200 - i) as f64;
-                down += (12_450_000.0 - down) / remaining;
-                up += (420_000.0 - up) / remaining;
-                seeding += (2_100_000.0 - seeding) / remaining;
-            }
+        for frame in demo::frames() {
             self.record_at(
                 &[
                     Torrent {
                         hash: "fixture-1".into(),
-                        dlspeed: down as u64,
-                        upspeed: up as u64,
+                        dlspeed: frame.down,
+                        upspeed: frame.up,
                         ..Default::default()
                     },
                     Torrent {
                         hash: "fixture-2".into(),
-                        upspeed: seeding as u64,
+                        upspeed: frame.seeding,
                         ..Default::default()
                     },
                 ],
-                i as f64 * 3.0,
+                frame.seconds,
             );
         }
     }

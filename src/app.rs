@@ -112,16 +112,18 @@ impl ClientApp {
             Torrent {
                 hash: "fixture-1".into(),
                 name: "Ubuntu 24.04 LTS — Desktop amd64.iso".into(),
-                size: 6_000_000_000,
-                progress: 0.64,
-                dlspeed: 12_450_000,
-                upspeed: 420_000,
+                size: crate::graphs::demo::SIZE,
+                progress: crate::graphs::demo::PROGRESS,
+                dlspeed: crate::graphs::demo::DOWN,
+                upspeed: crate::graphs::demo::UP,
+                ratio: crate::graphs::demo::UPLOADED as f64
+                    / crate::graphs::demo::DOWNLOADED as f64,
                 state: "downloading".into(),
                 category: "Linux".into(),
                 save_path: "D:/Downloads/Linux".into(),
                 num_seeds: 24,
                 num_leechs: 8,
-                eta: 240,
+                eta: 174,
                 ..Default::default()
             },
             Torrent {
@@ -129,7 +131,7 @@ impl ClientApp {
                 name: "Blender — открытые материалы".into(),
                 size: 1_200_000_000,
                 progress: 1.0,
-                upspeed: 2_100_000,
+                upspeed: crate::graphs::demo::SEED_UP,
                 state: "uploading".into(),
                 ..Default::default()
             },

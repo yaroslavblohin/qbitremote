@@ -144,6 +144,7 @@ pub struct Remote {
     selected_hash: String,
     file_filter: String,
     collapsed_folders: std::collections::HashSet<String>,
+    file_tree_initialized: bool,
     search_pattern: String,
     search_category: String,
     search_plugins: String,
@@ -176,6 +177,7 @@ impl Default for Remote {
             selected_hash: String::new(),
             file_filter: String::new(),
             collapsed_folders: Default::default(),
+            file_tree_initialized: false,
             search_pattern: String::new(),
             search_category: "all".into(),
             search_plugins: "enabled".into(),
@@ -325,6 +327,7 @@ impl Remote {
         self.graphs.clear_history();
         self.selected_hash.clear();
         self.collapsed_folders.clear();
+        self.file_tree_initialized = false;
     }
     pub fn commands(&mut self) -> Vec<Command> {
         std::mem::take(&mut self.queue)
@@ -543,6 +546,7 @@ impl Remote {
             self.selected_hash = hash.clone();
             self.file_filter.clear();
             self.collapsed_folders.clear();
+            self.file_tree_initialized = false;
         }
         ui.horizontal_wrapped(|ui| {
             for (id, name) in [
@@ -1264,6 +1268,10 @@ impl Remote {
         data: &Value,
         mappings: &[crate::path_mapping::PathMapping],
     ) {
+        if !self.file_tree_initialized && data.as_array().is_some_and(|files| !files.is_empty()) {
+            self.collapsed_folders = file_tree::initial_collapsed(data);
+            self.file_tree_initialized = true;
+        }
         let hash = &torrent.hash;
         ui.horizontal_wrapped(|ui| {
             ui.add(

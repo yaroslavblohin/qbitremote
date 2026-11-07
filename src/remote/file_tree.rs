@@ -77,9 +77,67 @@ pub fn rows(data: &Value, query: &str, collapsed: &HashSet<String>) -> Vec<Value
     out
 }
 
+/// Initially show root folders and their immediate contents only.
+pub fn initial_collapsed(data: &Value) -> HashSet<String> {
+    rows(data, "", &HashSet::new())
+        .into_iter()
+        .filter(|row| row["__folder"] == true && row["__depth"].as_u64().unwrap_or(0) > 0)
+        .filter_map(|row| row["__path"].as_str().map(str::to_owned))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn initial_expansion_shows_only_root_contents_and_search_preserves_it() {
+        let data = json!([
+            {"name":"Game/DLC/Nested/a.bin","index":7},
+            {"name":"Game/Tools/tool.exe","index":8},
+            {"name":"Game/base.bin","index":2},
+            {"name":"Other/sub/readme.txt","index":3},
+            {"name":"loose.txt","index":9}
+        ]);
+        let collapsed = initial_collapsed(&data);
+        assert_eq!(
+            collapsed,
+            HashSet::from([
+                "Game/DLC".into(),
+                "Game/DLC/Nested".into(),
+                "Game/Tools".into(),
+                "Other/sub".into()
+            ])
+        );
+        let initial = rows(&data, "", &collapsed);
+        assert_eq!(
+            initial
+                .iter()
+                .map(|r| r["__path"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            [
+                "Game",
+                "Game/DLC",
+                "Game/Tools",
+                "Game/base.bin",
+                "Other",
+                "Other/sub",
+                "loose.txt"
+            ]
+        );
+        let found = rows(&data, "a.bin", &collapsed);
+        assert_eq!(found.last().unwrap()["index"], 7);
+        assert_eq!(rows(&data, "", &collapsed), initial);
+        let mut manually_opened = collapsed.clone();
+        manually_opened.remove("Game/DLC");
+        let opened = rows(&data, "", &manually_opened);
+        assert!(opened
+            .iter()
+            .any(|r| r["__path"] == "Game/DLC/Nested" && r["__open"] == false));
+        assert!(!opened.iter().any(|r| r["index"] == 7));
+        assert!(initial_collapsed(&json!([])).is_empty());
+        assert!(initial_collapsed(&json!([{"name":"single.bin"}])).is_empty());
+    }
+
     #[test]
     fn folders_collapse_search_reveals_and_file_identity_survives() {
         let data = json!([

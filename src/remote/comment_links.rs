@@ -62,6 +62,16 @@ fn links(text: &str) -> Vec<Link> {
     result
 }
 pub fn layout(ui: &egui::Ui, text: &str, width: f32) -> Arc<egui::Galley> {
+    layout_text(ui, text, width, false)
+}
+
+/// One-line links for compact tables; actions retain the entire URI when elided.
+pub fn show_truncated(ui: &mut egui::Ui, text: &str) {
+    let galley = layout_text(ui, text, ui.available_width(), true);
+    show(ui, text, galley);
+}
+
+fn layout_text(ui: &egui::Ui, text: &str, width: f32, truncated: bool) -> Arc<egui::Galley> {
     let font = egui::TextStyle::Body.resolve(ui.style());
     let normal = egui::TextFormat {
         font_id: font.clone(),
@@ -76,6 +86,9 @@ pub fn layout(ui: &egui::Ui, text: &str, width: f32) -> Arc<egui::Galley> {
     };
     let mut job = egui::text::LayoutJob::default();
     job.wrap.max_width = width;
+    if truncated {
+        job.wrap.max_rows = 1;
+    }
     let mut end = 0;
     for link in links(text) {
         job.append(&text[end..link.bytes.start], 0.0, normal.clone());
@@ -87,7 +100,9 @@ pub fn layout(ui: &egui::Ui, text: &str, width: f32) -> Arc<egui::Galley> {
 }
 pub fn show(ui: &mut egui::Ui, text: &str, galley: Arc<egui::Galley>) {
     let found = links(text);
-    let response = ui.add(egui::Label::new(galley.clone()).wrap());
+    let response = ui
+        .add(egui::Label::new(galley.clone()).wrap())
+        .on_hover_text(text);
     if found.is_empty() {
         response.context_menu(|ui| {
             if ui.button("Копировать").clicked() {
@@ -178,7 +193,8 @@ mod tests {
     }
     #[test]
     fn wrapped_link_left_click_and_context_actions_target_exact_url() {
-        for target in ["https://example.org/path/very-long-name?q=1&b=2", "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=Example&tr=udp%3A%2F%2Ftracker.example.org%3A6969", "udp://tracker.example.org:6969/announce"] {
+        for truncated in [false, true] {
+            for target in ["https://example.org/path/very-long-name?q=1&b=2", "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=Example&tr=udp%3A%2F%2Ftracker.example.org%3A6969", "udp://tracker.example.org:6969/announce"] {
         let open_label=if target.starts_with("https:") { "Открыть в браузере по умолчанию" } else { "Открыть в приложении по умолчанию" };
         for action in [
             "left",
@@ -187,7 +203,7 @@ mod tests {
             "Отмена",
         ] {
             let ctx = egui::Context::default();
-            let text = format!("Описание: {target} конец");
+            let text = if truncated { format!("{target} конец") } else { format!("Описание: {target} конец") };
             let mut point = egui::Pos2::ZERO;
             let mut menu_point = egui::Pos2::ZERO;
             let mut opened = Vec::new();
@@ -218,11 +234,12 @@ mod tests {
                 }
                 let output = ctx.run(input, |ctx| {
                     egui::CentralPanel::default().show(ctx, |ui| {
-                        let galley = layout(ui, &text, 140.0);
+                        let galley = layout_text(ui, &text, if truncated { 240.0 } else { 140.0 }, truncated);
                         if frame == 0 {
-                            let row = &galley.rows[1];
+                            let row = &galley.rows[if truncated { 0 } else { 1 }];
+                            let glyph = 1;
                             point = ui.cursor().min
-                                + egui::vec2(row.glyphs[1].pos.x + 1.0, row.rect.center().y);
+                                + egui::vec2(row.glyphs[glyph].pos.x + 1.0, row.rect.center().y);
                         }
                         show(ui, &text, galley);
                     });
@@ -266,6 +283,7 @@ mod tests {
                 },
                 "{action}"
             );
+        }
         }
         }
     }

@@ -1050,8 +1050,7 @@ impl Remote {
                             let url = text(tracker, "url");
                             row.col(|ui| {
                                 let display = url.trim_matches('*').trim();
-                                ui.add(egui::Label::new(display).truncate())
-                                    .on_hover_text(&url);
+                                comment_links::show_truncated(ui, display);
                             });
                             row.col(|ui| {
                                 let (label, color) = match number(tracker, "status") {
@@ -1089,11 +1088,10 @@ impl Remote {
                             }
                             row.col(|ui| {
                                 let msg = text(tracker, "msg");
-                                ui.add(
-                                    egui::Label::new(if msg.is_empty() { "—" } else { &msg })
-                                        .truncate(),
-                                )
-                                .on_hover_text(&msg);
+                                comment_links::show_truncated(
+                                    ui,
+                                    if msg.is_empty() { "—" } else { &msg },
+                                );
                             });
                             row.col(|ui| {
                                 if url.contains("://") {

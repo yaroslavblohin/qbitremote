@@ -565,7 +565,7 @@ impl ClientApp {
         egui::Window::new("О программе")
             .open(&mut self.about_open)
             .collapsible(false)
-            .resizable(false)
+            .auto_sized()
             .default_width(560.0)
             .max_width((ctx.screen_rect().width() - 48.0).clamp(280.0, 560.0))
             .max_height((ctx.screen_rect().height() - 64.0).max(240.0))
@@ -579,13 +579,6 @@ impl ClientApp {
                     );
                     ui.label("©2026, Copyleft Yaroslav Blohin");
                     ui.label("Клиент для удалённого управления qBittorrent.");
-                });
-                ui.separator();
-                ui.collapsing("Управление интерфейсом", |ui| {
-                    ui.label("Щелчок по заголовку — сортировка.");
-                    ui.label("Перетаскивание заголовка — порядок колонок.");
-                    ui.label("Перетаскивание границы — ширина колонки.");
-                    ui.label("Вид → Колонки — выбор отображаемых полей.");
                 });
             });
         let mut open = self.settings_open;
@@ -1018,7 +1011,7 @@ impl ClientApp {
                     }
                 });
                 ui.menu_button("Справка", |ui| {
-                    if ui.button("О программе и управлении…").clicked() {
+                    if ui.button("О программе…").clicked() {
                         self.about_open = true;
                         ui.close_menu();
                     }

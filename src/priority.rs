@@ -1,6 +1,6 @@
 use eframe::egui;
 pub const WIDTH: f32 = 136.0;
-const FONT_SIZE: f32 = 13.0;
+const FONT_SIZE: f32 = 12.0;
 pub fn name(priority: i64) -> &'static str {
     match priority {
         0 => "Не скачивать",

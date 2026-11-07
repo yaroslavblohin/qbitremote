@@ -14,10 +14,13 @@ fn links(text: &str) -> Vec<Link> {
             continue;
         }
         let rest = &text[start..];
-        if !["http://", "https://"].iter().any(|prefix| {
-            rest.get(..prefix.len())
-                .is_some_and(|s| s.eq_ignore_ascii_case(prefix))
-        }) {
+        if !["http://", "https://", "magnet:?", "udp://"]
+            .iter()
+            .any(|prefix| {
+                rest.get(..prefix.len())
+                    .is_some_and(|s| s.eq_ignore_ascii_case(prefix))
+            })
+        {
             continue;
         }
         let mut end = start
@@ -42,9 +45,13 @@ fn links(text: &str) -> Vec<Link> {
             }
         }
         consumed = end;
-        if url::Url::parse(&text[start..end])
-            .is_ok_and(|u| matches!(u.scheme(), "http" | "https") && u.host_str().is_some())
-        {
+        if url::Url::parse(&text[start..end]).is_ok_and(|u| match u.scheme() {
+            "http" | "https" | "udp" => u.host_str().is_some(),
+            "magnet" => u
+                .query_pairs()
+                .any(|(key, value)| key == "xt" && !value.is_empty()),
+            _ => false,
+        }) {
             let chars = text[..start].chars().count();
             result.push(Link {
                 bytes: start..end,
@@ -118,8 +125,18 @@ pub fn show(ui: &mut egui::Ui, text: &str, galley: Arc<egui::Galley>) {
                         ui.ctx().copy_text(target.to_owned());
                         ui.close_menu();
                     }
-                    if ui.button("Открыть в браузере по умолчанию").clicked()
+                    let open_label = if target
+                        .get(..7)
+                        .is_some_and(|s| s.eq_ignore_ascii_case("http://"))
+                        || target
+                            .get(..8)
+                            .is_some_and(|s| s.eq_ignore_ascii_case("https://"))
                     {
+                        "Открыть в браузере по умолчанию"
+                    } else {
+                        "Открыть в приложении по умолчанию"
+                    };
+                    if ui.button(open_label).clicked() {
                         ui.ctx().open_url(egui::OpenUrl::new_tab(target));
                         ui.close_menu();
                     }
@@ -161,14 +178,16 @@ mod tests {
     }
     #[test]
     fn wrapped_link_left_click_and_context_actions_target_exact_url() {
+        for target in ["https://example.org/path/very-long-name?q=1&b=2", "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=Example&tr=udp%3A%2F%2Ftracker.example.org%3A6969", "udp://tracker.example.org:6969/announce"] {
+        let open_label=if target.starts_with("https:") { "Открыть в браузере по умолчанию" } else { "Открыть в приложении по умолчанию" };
         for action in [
             "left",
             "Скопировать ссылку",
-            "Открыть в браузере по умолчанию",
+            open_label,
             "Отмена",
         ] {
             let ctx = egui::Context::default();
-            let text = "Описание: https://example.org/path/very-long-name?q=1&b=2 конец";
+            let text = format!("Описание: {target} конец");
             let mut point = egui::Pos2::ZERO;
             let mut menu_point = egui::Pos2::ZERO;
             let mut opened = Vec::new();
@@ -199,13 +218,13 @@ mod tests {
                 }
                 let output = ctx.run(input, |ctx| {
                     egui::CentralPanel::default().show(ctx, |ui| {
-                        let galley = layout(ui, text, 140.0);
+                        let galley = layout(ui, &text, 140.0);
                         if frame == 0 {
                             let row = &galley.rows[1];
                             point = ui.cursor().min
                                 + egui::vec2(row.glyphs[1].pos.x + 1.0, row.rect.center().y);
                         }
-                        show(ui, text, galley);
+                        show(ui, &text, galley);
                     });
                 });
                 for command in &output.platform_output.commands {
@@ -228,10 +247,9 @@ mod tests {
                         .expect("context menu item");
                 }
             }
-            let target = "https://example.org/path/very-long-name?q=1&b=2";
             assert_eq!(
                 opened,
-                if action == "left" || action == "Открыть в браузере по умолчанию"
+                if action == "left" || action == open_label
                 {
                     vec![target.to_owned()]
                 } else {
@@ -248,6 +266,7 @@ mod tests {
                 },
                 "{action}"
             );
+        }
         }
     }
 }

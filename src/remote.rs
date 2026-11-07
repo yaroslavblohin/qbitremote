@@ -13,6 +13,7 @@ mod comment_links;
 mod file_tree;
 mod pages;
 mod preferences;
+mod properties;
 
 fn menu_group(ui: &mut egui::Ui, title: &str) {
     let p = crate::theme::palette(ui.ctx());
@@ -272,7 +273,7 @@ impl Remote {
             ),
             (
                 "properties/fixture-1",
-                json!({"save_path":"/downloads/Linux","total_size":6000000000_u64,"total_downloaded":3840000000_u64,"total_uploaded":23000000,"dl_speed":12450000,"up_speed":120000,"dl_limit":0,"up_limit":1048576,"seeds":24,"peers":8,"pieces_num":1500,"pieces_have":960,"share_ratio":0.006,"comment":"Тестовые данные"}),
+                json!({"save_path":"/downloads/Linux","total_size":6000000000_u64,"total_downloaded":3840000000_u64,"total_uploaded":23000000,"dl_speed":12450000,"up_speed":120000,"dl_limit":0,"up_limit":1048576,"seeds":24,"peers":8,"pieces_num":1500,"pieces_have":960,"share_ratio":0.006,"comment":"Материалы: https://example.org/torrent/ubuntu"}),
             ),
             (
                 "transfer",
@@ -594,23 +595,27 @@ impl Remote {
                         );
                     }
                 });
-                let extra = serde_json::to_value(&torrent.extra).unwrap_or_default();
+                let (data, extra) = properties::split(&data, &torrent.extra);
                 property_scroll_area(ui).show(ui, |ui| {
                     let label_width = property_label_width(ui, &[&data, &extra]);
                     property_table(ui, "properties", &data, label_width);
-                    egui::CollapsingHeader::new("Дополнительные сведения")
-                        .id_salt("general-extra")
-                        .open(
-                            if cfg!(feature = "ui-smoke")
-                                && std::env::var("QBIT_SMOKE_PAGE").as_deref()
-                                    == Ok("general-layout")
-                            {
-                                Some(true)
-                            } else {
-                                None
-                            },
-                        )
-                        .show_unindented(ui, |ui| property_table(ui, "extra", &extra, label_width));
+                    if extra.as_object().is_some_and(|map| !map.is_empty()) {
+                        egui::CollapsingHeader::new("Дополнительные сведения")
+                            .id_salt("general-extra")
+                            .open(
+                                if cfg!(feature = "ui-smoke")
+                                    && std::env::var("QBIT_SMOKE_PAGE").as_deref()
+                                        == Ok("general-layout")
+                                {
+                                    Some(true)
+                                } else {
+                                    None
+                                },
+                            )
+                            .show_unindented(ui, |ui| {
+                                property_table(ui, "extra", &extra, label_width)
+                            });
+                    }
                 });
             }
             1 => self.trackers(ui, hash, &data),
@@ -1671,7 +1676,8 @@ fn property_table(ui: &mut egui::Ui, id: &str, value: &Value, label_width: f32) 
         let text = format_value(key, value);
         let width = ui.available_width();
         let value_width = (width - label_width - 20.0).max(1.0);
-        let comment = (key == "comment").then(|| comment_links::layout(ui, &text, value_width));
+        let comment = (matches!(key.as_str(), "comment" | "magnet_uri" | "tracker"))
+            .then(|| comment_links::layout(ui, &text, value_width));
         let text_height = comment.as_ref().map_or_else(
             || {
                 ui.painter()
@@ -1831,6 +1837,8 @@ fn label(key: &str) -> &str {
         "save_path" => "Путь сохранения",
         "download_path" => "Временная папка",
         "comment" => "Комментарий",
+        "magnet_uri" => "Magnet-ссылка",
+        "tracker" => "Трекер",
         "created_by" => "Создан программой",
         "creation_date" => "Дата создания",
         "addition_date" => "Добавлен",

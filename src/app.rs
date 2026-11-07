@@ -147,6 +147,8 @@ impl ClientApp {
                 "added_on": 1793653200_i64,
                 "availability": 1.2,
                 "comment": "https://example.org/torrents/linux-desktop-release-notes",
+                "magnet_uri": "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=Ubuntu",
+                "tracker": "https://tracker.example.org/announce",
                 "infohash_v1": "0123456789abcdef0123456789abcdef01234567",
                 "save_path": "/downloads/complete/Linux"
             }))

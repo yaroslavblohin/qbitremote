@@ -770,7 +770,7 @@ impl Remote {
                 "recheck" => crate::ui_icons::VERIFY,
                 "reannounce" => crate::ui_icons::TRACKERS,
                 "increasePrio" => 2,
-                "decreasePrio" => 1,
+                "decreasePrio" => crate::ui_icons::QUEUE_DOWN,
                 "topPrio" => crate::ui_icons::TOP,
                 "bottomPrio" => crate::ui_icons::BOTTOM,
                 "toggleFirstLastPiecePrio" => crate::ui_icons::EDGES,

@@ -1449,7 +1449,10 @@ impl eframe::App for ClientApp {
                                     ctx.data_mut(|data| {
                                         data.insert_temp(
                                             egui::Id::new("smoke-torrent-row"),
-                                            response.rect.center(),
+                                            egui::pos2(
+                                                response.rect.left() + 20.0,
+                                                response.rect.center().y,
+                                            ),
                                         )
                                     });
                                 }

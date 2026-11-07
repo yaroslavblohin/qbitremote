@@ -107,7 +107,9 @@ impl SmokeApp {
 impl App for SmokeApp {
     fn raw_input_hook(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
         let page = std::env::var("QBIT_SMOKE_PAGE").unwrap_or_default();
-        if !matches!(page.as_str(), "actions" | "actions-bottom") {
+        if self.started.elapsed() < Duration::from_millis(600)
+            || !matches!(page.as_str(), "actions" | "actions-bottom")
+        {
             return;
         }
         if let Some(pos) =

@@ -21,10 +21,11 @@ pub const UPLOAD_LIMIT: usize = 29;
 pub const SHARE_LIMIT: usize = 30;
 pub const EXPORT: usize = 31;
 pub const ERROR: usize = 32;
+pub const QUEUE_DOWN: usize = 33;
 
 pub fn color(kind: usize, p: crate::theme::Palette) -> Color32 {
     match kind {
-        4 | BOTTOM | REMOVE_TAG | ERROR => p.red,
+        4 | BOTTOM | QUEUE_DOWN | REMOVE_TAG | ERROR => p.red,
         2 | PLAY | TOP | FORCE | SEED | ADD_TAG | UPLOAD_LIMIT => p.green,
         3 | 7 | 10 | 11 | CATEGORY | RENAME | MOVE | SHARE_LIMIT => p.orange,
         1 | 5 | 6 | VERIFY | TRACKERS | EXPORT | DOWNLOAD_LIMIT => p.blue,
@@ -179,8 +180,8 @@ pub fn draw(p: &egui::Painter, center: Pos2, kind: usize, _fallback: Color32) {
     let gray = Color32::from_rgb(155, 167, 181);
     match kind {
         0 | 8 => a.list(false),
-        1 | 2 | TOP | BOTTOM | DOWNLOAD_LIMIT | UPLOAD_LIMIT => {
-            a.arrow(matches!(kind, 1 | BOTTOM | DOWNLOAD_LIMIT), c);
+        1 | 2 | TOP | BOTTOM | QUEUE_DOWN | DOWNLOAD_LIMIT | UPLOAD_LIMIT => {
+            a.arrow(matches!(kind, 1 | BOTTOM | QUEUE_DOWN | DOWNLOAD_LIMIT), c);
             if matches!(kind, TOP | UPLOAD_LIMIT) {
                 a.line((-6.0, -7.2), (6.0, -7.2), gray, 1.3);
             }

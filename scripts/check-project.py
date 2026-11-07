@@ -5,7 +5,6 @@ import re
 import struct
 import sys
 import zlib
-import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parent.parent
 errors = []
@@ -75,19 +74,9 @@ for file in ['README.md', 'Release/README.md', 'CHANGELOG.md']:
 for file in list((ROOT/'src').rglob('*.rs')) + [ROOT/'build.rs']:
     for target in re.findall(r'include_(?:bytes|str)!\("([^"\n]+)"\)', file.read_text(encoding='utf-8')):
         require((file.parent/target).is_file(), f'Missing embedded resource: {file}: {target}')
-for target in ['assets/brand-lockup.svg','assets/brand-forest.png','assets/logo-master.png',
+for target in ['assets/brand-suffix.png','assets/brand-forest.png','assets/logo-master.png',
                '.github/workflows/windows.yml','.github/workflows/macos.yml','scripts/build-macos.sh']:
     require((ROOT/target).is_file(), f'Missing required input: {target}')
-try:
-    vector = ET.parse(ROOT/'assets/brand-lockup.svg').getroot()
-    require(vector.tag == '{http://www.w3.org/2000/svg}svg', 'Invalid logo SVG root')
-    for element in vector.iter():
-        require(element.tag.rsplit('}', 1)[-1] not in {'text', 'image', 'filter'}, 'Logo must use paths without fonts, raster or blur')
-        for key, value in element.attrib.items():
-            if key.rsplit('}', 1)[-1] == 'href':
-                require(value.startswith('#'), 'External logo SVG dependency')
-except (ET.ParseError, OSError):
-    errors.append('Invalid or missing vector logo')
 for file in (ROOT/'assets').rglob('*.png'):
     png(file)
 raster = ROOT/'assets/logo.rgba'

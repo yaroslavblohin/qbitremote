@@ -1,8 +1,6 @@
 #[path = "icon_pixels.rs"]
 mod pixels;
 pub use pixels::rgba;
-#[path = "brand_vector.rs"]
-mod vector;
 
 pub fn window() -> eframe::egui::IconData {
     eframe::egui::IconData {
@@ -15,17 +13,22 @@ pub fn window() -> eframe::egui::IconData {
 /// Full demoscene lockup, centered as one image so icon and wordmark stay aligned.
 pub fn header(ui: &mut eframe::egui::Ui) {
     use eframe::egui;
+    let source = brand_source(
+        ui.ctx(),
+        "brand-lockup",
+        include_bytes!("../assets/brand-lockup.png"),
+    );
     let (area, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), 110.0),
         egui::Sense::hover(),
     );
-    let aspect = vector::aspect();
+    let aspect = source.width() as f32 / source.height() as f32;
     let width = area.width().min(area.height() * aspect);
     let rect = pixel_rect(
         ui.ctx(),
         egui::Rect::from_center_size(area.center(), egui::vec2(width, width / aspect)),
     );
-    let texture = vector_texture(ui.ctx(), "brand-lockup", rect.size());
+    let texture = scaled_texture(ui.ctx(), "brand-lockup", &source, rect.size());
     ui.painter().image(
         texture.id(),
         rect,
@@ -58,15 +61,23 @@ pub fn presentation(ui: &mut eframe::egui::Ui) {
             .fit_to_exact_size(egui::vec2(width, height))
             .corner_radius(6),
     );
+    let logo = brand_source(
+        ui.ctx(),
+        "original-lockup",
+        include_bytes!("../assets/brand-lockup.png"),
+    );
     let logo_width = width * 0.90;
     let rect = pixel_rect(
         ui.ctx(),
         egui::Rect::from_center_size(
             response.rect.center(),
-            egui::vec2(logo_width, logo_width / vector::aspect()),
+            egui::vec2(
+                logo_width,
+                logo_width * logo.height() as f32 / logo.width() as f32,
+            ),
         ),
     );
-    let texture = vector_texture(ui.ctx(), "about-vector", rect.size());
+    let texture = scaled_texture(ui.ctx(), "about-lockup", &logo, rect.size());
     ui.painter().image(
         texture.id(),
         rect,
@@ -75,6 +86,7 @@ pub fn presentation(ui: &mut eframe::egui::Ui) {
     );
 }
 
+// Keep each prepared texel on one physical pixel instead of filtering it a second time.
 fn pixel_rect(ctx: &eframe::egui::Context, rect: eframe::egui::Rect) -> eframe::egui::Rect {
     use eframe::egui;
     let scale = ctx.pixels_per_point();
@@ -88,36 +100,6 @@ fn pixel_rect(ctx: &eframe::egui::Context, rect: eframe::egui::Rect) -> eframe::
             (rect.height() * scale).floor().max(1.0) / scale,
         ),
     )
-}
-fn vector_texture(
-    ctx: &eframe::egui::Context,
-    name: &str,
-    logical: eframe::egui::Vec2,
-) -> eframe::egui::TextureHandle {
-    use eframe::egui;
-    let size = [
-        (logical.x * ctx.pixels_per_point()).round().max(1.0) as u32,
-        (logical.y * ctx.pixels_per_point()).round().max(1.0) as u32,
-    ];
-    let id = egui::Id::new((name, "vector-size"));
-    if let Some((previous, texture)) =
-        ctx.data(|data| data.get_temp::<([u32; 2], egui::TextureHandle)>(id))
-    {
-        if previous == size {
-            return texture;
-        }
-    }
-    let pixels = vector::raster(size[0], size[1]);
-    let texture = ctx.load_texture(
-        name,
-        egui::ColorImage::from_rgba_unmultiplied(
-            [size[0] as usize, size[1] as usize],
-            pixels.as_raw(),
-        ),
-        egui::TextureOptions::NEAREST,
-    );
-    ctx.data_mut(|data| data.insert_temp(id, (size, texture.clone())));
-    texture
 }
 
 // Decode once; resample only when the physical display size (including DPI) changes.
@@ -147,8 +129,8 @@ fn scaled_texture(
 ) -> eframe::egui::TextureHandle {
     use eframe::egui;
     let size = [
-        (logical.x * ctx.pixels_per_point()).ceil().max(1.0) as u32,
-        (logical.y * ctx.pixels_per_point()).ceil().max(1.0) as u32,
+        (logical.x * ctx.pixels_per_point()).round().max(1.0) as u32,
+        (logical.y * ctx.pixels_per_point()).round().max(1.0) as u32,
     ];
     let id = egui::Id::new((name, "scaled"));
     if let Some((previous, texture)) =
@@ -159,13 +141,19 @@ fn scaled_texture(
         }
     }
     let pixels = resample(source, size);
+    let logo = name == "brand-lockup" || name == "about-lockup";
+    let pixels = if logo { sharpen_logo(&pixels) } else { pixels };
     let texture = ctx.load_texture(
         name,
         egui::ColorImage::from_rgba_unmultiplied(
             [size[0] as usize, size[1] as usize],
             pixels.as_raw(),
         ),
-        egui::TextureOptions::LINEAR,
+        if logo {
+            egui::TextureOptions::NEAREST
+        } else {
+            egui::TextureOptions::LINEAR
+        },
     );
     ctx.data_mut(|data| data.insert_temp(id, (size, texture.clone())));
     texture
@@ -204,6 +192,35 @@ fn resample(source: &image::RgbaImage, size: [u32; 2]) -> image::RgbaImage {
     })
 }
 
+// Mild unsharp mask at final display resolution. Preserve coverage exactly so
+// transparent contours stay smooth and do not grow a dark halo.
+fn sharpen_logo(source: &image::RgbaImage) -> image::RgbaImage {
+    let premultiplied = image::Rgba32FImage::from_fn(source.width(), source.height(), |x, y| {
+        let p = source.get_pixel(x, y);
+        let a = p[3] as f32 / 255.0;
+        image::Rgba([
+            p[0] as f32 / 255.0 * a,
+            p[1] as f32 / 255.0 * a,
+            p[2] as f32 / 255.0 * a,
+            a,
+        ])
+    });
+    let blurred = image::imageops::blur(&premultiplied, 0.6);
+    image::RgbaImage::from_fn(source.width(), source.height(), |x, y| {
+        let original = source.get_pixel(x, y);
+        let mut result = *original;
+        let blur = blurred.get_pixel(x, y);
+        if original[3] > 0 && blur[3] > 0.0 {
+            for channel in 0..3 {
+                let local = (blur[channel] / blur[3]).clamp(0.0, 1.0) * 255.0;
+                let value = original[channel] as f32;
+                result[channel] = (value + 0.35 * (value - local)).clamp(0.0, 255.0).round() as u8;
+            }
+        }
+        result
+    })
+}
+
 #[cfg(feature = "ui-smoke")]
 pub fn export_branding() {
     std::fs::create_dir_all("assets").unwrap();
@@ -239,12 +256,71 @@ pub fn import_branding() {
         )
         .unwrap();
     }
-    let lockup = vector::raster(1600, (1600.0 / vector::aspect()).round() as u32);
+    // Dedicated suffix: trim transparent padding only, never crop letter geometry.
+    let source = image::open("assets/brand-suffix.png").unwrap().to_rgba8();
+    let mut bounds = (source.width(), source.height(), 0, 0);
+    for (x, y, pixel) in source.enumerate_pixels() {
+        if pixel[3] > 0 {
+            bounds.0 = bounds.0.min(x);
+            bounds.1 = bounds.1.min(y);
+            bounds.2 = bounds.2.max(x);
+            bounds.3 = bounds.3.max(y);
+        }
+    }
+    let text = image::imageops::crop_imm(
+        &source,
+        bounds.0,
+        bounds.1,
+        bounds.2 - bounds.0 + 1,
+        bounds.3 - bounds.1 + 1,
+    )
+    .to_image();
+    let text = image::imageops::resize(&text, 700, 230, image::imageops::FilterType::Lanczos3);
+    let icon = image::RgbaImage::from_raw(900, 900, rgba(900)).unwrap();
+    // Trim transparent padding so the suffix sits directly beside the monogram.
+    let mut bounds = (900, 900, 0, 0);
+    for (x, y, pixel) in icon.enumerate_pixels() {
+        if pixel[3] > 0 {
+            bounds.0 = bounds.0.min(x);
+            bounds.1 = bounds.1.min(y);
+            bounds.2 = bounds.2.max(x);
+            bounds.3 = bounds.3.max(y);
+        }
+    }
+    let icon = image::imageops::crop_imm(
+        &icon,
+        bounds.0,
+        bounds.1,
+        bounds.2 - bounds.0 + 1,
+        bounds.3 - bounds.1 + 1,
+    )
+    .to_image();
+    let y = (icon.height() - text.height()) / 2;
+    // Match actual contours row by row, rather than their transparent rectangles.
+    let mut text_x = 0_i64;
+    for row in 0..text.height() {
+        let right = (0..icon.width()).rfind(|&x| icon.get_pixel(x, y + row)[3] > 16);
+        let left = (0..text.width()).find(|&x| text.get_pixel(x, row)[3] > 16);
+        if let (Some(right), Some(left)) = (right, left) {
+            text_x = text_x.max(right as i64 + 1 + 12 - left as i64);
+        }
+    }
+    let mut lockup = image::RgbaImage::new(
+        (text_x as u32 + text.width()).max(icon.width()),
+        icon.height(),
+    );
+    image::imageops::overlay(&mut lockup, &icon, 0, 0);
+    image::imageops::overlay(&mut lockup, &text, text_x, y as i64);
     lockup.save("assets/brand-lockup.png").unwrap();
     let mut forest = image::open("assets/brand-forest.png").unwrap().to_rgba8();
     let width = (forest.width() as f32 * 0.90) as u32;
     let height = width * lockup.height() / lockup.width();
-    let overlay = vector::raster(width, height);
+    let overlay = image::imageops::resize(
+        &lockup,
+        width,
+        height,
+        image::imageops::FilterType::Lanczos3,
+    );
     let x = (forest.width() - width) / 2;
     let y = (forest.height() - height) / 2;
     image::imageops::overlay(&mut forest, &overlay, x as i64, y as i64);
@@ -264,7 +340,7 @@ mod tests {
                 image::Rgba([0; 4])
             }
         });
-        let result = resample(&source, [19, 19]);
+        let result = sharpen_logo(&resample(&source, [19, 19]));
         let edges: Vec<_> = result.pixels().filter(|p| p[3] > 0 && p[3] < 255).collect();
         assert!(!edges.is_empty());
         for pixel in edges {
@@ -274,13 +350,30 @@ mod tests {
     }
 
     #[test]
-    fn vector_texture_reuses_same_dpi_and_rerenders_when_pixel_size_changes() {
+    fn sharpening_preserves_coverage_and_increases_only_local_edge_contrast() {
+        let source = image::RgbaImage::from_fn(32, 16, |x, _| {
+            let value = if x < 16 { 90 } else { 150 };
+            image::Rgba([value, value, value, 255])
+        });
+        let sharp = sharpen_logo(&source);
+        assert!(sharp.get_pixel(15, 8)[0] < 90);
+        assert!(sharp.get_pixel(16, 8)[0] > 150);
+        assert_eq!(sharp.get_pixel(4, 8), source.get_pixel(4, 8));
+        assert!(source
+            .pixels()
+            .zip(sharp.pixels())
+            .all(|(a, b)| a[3] == b[3]));
+    }
+    #[test]
+    fn prepared_logo_is_cached_by_physical_size_and_uses_one_to_one_sampling() {
         let ctx = egui::Context::default();
+        let source = image::RgbaImage::from_pixel(16, 8, image::Rgba([120, 180, 240, 255]));
         let mut previous_id = None;
         for (frame, ppp) in [1.0, 1.0, 1.5, 1.5, 2.0].into_iter().enumerate() {
             ctx.set_pixels_per_point(ppp);
             let output = ctx.run(egui::RawInput::default(), |ctx| {
-                let texture = vector_texture(ctx, "cache-test", egui::vec2(200.0, 100.0));
+                let texture =
+                    scaled_texture(ctx, "brand-lockup", &source, egui::vec2(200.0, 100.0));
                 if let Some(id) = previous_id {
                     if frame == 1 || frame == 3 {
                         assert_eq!(texture.id(), id);
@@ -298,10 +391,13 @@ mod tests {
             if frame == 1 || frame == 3 {
                 assert!(upload.is_none());
             } else {
+                let delta = &upload.unwrap().1;
                 assert_eq!(
-                    upload.unwrap().1.image.size(),
+                    delta.image.size(),
                     [(200.0 * ppp) as usize, (100.0 * ppp) as usize]
                 );
+                assert_eq!(delta.options.magnification, egui::TextureFilter::Nearest);
+                assert_eq!(delta.options.minification, egui::TextureFilter::Nearest);
             }
         }
     }

@@ -1,6 +1,8 @@
 #[path = "icon_pixels.rs"]
 mod pixels;
 pub use pixels::rgba;
+#[path = "brand_vector.rs"]
+mod vector;
 
 pub fn window() -> eframe::egui::IconData {
     eframe::egui::IconData {
@@ -13,19 +15,17 @@ pub fn window() -> eframe::egui::IconData {
 /// Full demoscene lockup, centered as one image so icon and wordmark stay aligned.
 pub fn header(ui: &mut eframe::egui::Ui) {
     use eframe::egui;
-    let source = brand_source(
-        ui.ctx(),
-        "brand-lockup",
-        include_bytes!("../assets/brand-lockup.png"),
-    );
     let (area, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), 110.0),
         egui::Sense::hover(),
     );
-    let aspect = source.width() as f32 / source.height() as f32;
+    let aspect = vector::aspect();
     let width = area.width().min(area.height() * aspect);
-    let rect = egui::Rect::from_center_size(area.center(), egui::vec2(width, width / aspect));
-    let texture = scaled_texture(ui.ctx(), "brand-lockup", &source, rect.size());
+    let rect = pixel_rect(
+        ui.ctx(),
+        egui::Rect::from_center_size(area.center(), egui::vec2(width, width / aspect)),
+    );
+    let texture = vector_texture(ui.ctx(), "brand-lockup", rect.size());
     ui.painter().image(
         texture.id(),
         rect,
@@ -42,8 +42,8 @@ pub fn presentation(ui: &mut eframe::egui::Ui) {
     use eframe::egui;
     let source = brand_source(
         ui.ctx(),
-        "about-presentation",
-        include_bytes!("../assets/brand-presentation.png"),
+        "about-forest",
+        include_bytes!("../assets/brand-forest.png"),
     );
     let width = ui.available_width().min(560.0);
     let height = width * source.height() as f32 / source.width() as f32;
@@ -53,11 +53,71 @@ pub fn presentation(ui: &mut eframe::egui::Ui) {
         &source,
         egui::vec2(width, height),
     );
-    ui.add(
+    let response = ui.add(
         egui::Image::new(&texture)
             .fit_to_exact_size(egui::vec2(width, height))
             .corner_radius(6),
     );
+    let logo_width = width * 0.90;
+    let rect = pixel_rect(
+        ui.ctx(),
+        egui::Rect::from_center_size(
+            response.rect.center(),
+            egui::vec2(logo_width, logo_width / vector::aspect()),
+        ),
+    );
+    let texture = vector_texture(ui.ctx(), "about-vector", rect.size());
+    ui.painter().image(
+        texture.id(),
+        rect,
+        egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+        egui::Color32::WHITE,
+    );
+}
+
+fn pixel_rect(ctx: &eframe::egui::Context, rect: eframe::egui::Rect) -> eframe::egui::Rect {
+    use eframe::egui;
+    let scale = ctx.pixels_per_point();
+    egui::Rect::from_min_size(
+        egui::pos2(
+            (rect.left() * scale).round() / scale,
+            (rect.top() * scale).round() / scale,
+        ),
+        egui::vec2(
+            (rect.width() * scale).floor().max(1.0) / scale,
+            (rect.height() * scale).floor().max(1.0) / scale,
+        ),
+    )
+}
+fn vector_texture(
+    ctx: &eframe::egui::Context,
+    name: &str,
+    logical: eframe::egui::Vec2,
+) -> eframe::egui::TextureHandle {
+    use eframe::egui;
+    let size = [
+        (logical.x * ctx.pixels_per_point()).round().max(1.0) as u32,
+        (logical.y * ctx.pixels_per_point()).round().max(1.0) as u32,
+    ];
+    let id = egui::Id::new((name, "vector-size"));
+    if let Some((previous, texture)) =
+        ctx.data(|data| data.get_temp::<([u32; 2], egui::TextureHandle)>(id))
+    {
+        if previous == size {
+            return texture;
+        }
+    }
+    let pixels = vector::raster(size[0], size[1]);
+    let texture = ctx.load_texture(
+        name,
+        egui::ColorImage::from_rgba_unmultiplied(
+            [size[0] as usize, size[1] as usize],
+            pixels.as_raw(),
+        ),
+        egui::TextureOptions::NEAREST,
+    );
+    ctx.data_mut(|data| data.insert_temp(id, (size, texture.clone())));
+    texture
 }
 
 // Decode once; resample only when the physical display size (including DPI) changes.
@@ -179,71 +239,12 @@ pub fn import_branding() {
         )
         .unwrap();
     }
-    // Dedicated suffix: trim transparent padding only, never crop letter geometry.
-    let source = image::open("assets/brand-suffix.png").unwrap().to_rgba8();
-    let mut bounds = (source.width(), source.height(), 0, 0);
-    for (x, y, pixel) in source.enumerate_pixels() {
-        if pixel[3] > 0 {
-            bounds.0 = bounds.0.min(x);
-            bounds.1 = bounds.1.min(y);
-            bounds.2 = bounds.2.max(x);
-            bounds.3 = bounds.3.max(y);
-        }
-    }
-    let text = image::imageops::crop_imm(
-        &source,
-        bounds.0,
-        bounds.1,
-        bounds.2 - bounds.0 + 1,
-        bounds.3 - bounds.1 + 1,
-    )
-    .to_image();
-    let text = image::imageops::resize(&text, 700, 230, image::imageops::FilterType::Lanczos3);
-    let icon = image::RgbaImage::from_raw(900, 900, rgba(900)).unwrap();
-    // Trim transparent padding so the suffix sits directly beside the monogram.
-    let mut bounds = (900, 900, 0, 0);
-    for (x, y, pixel) in icon.enumerate_pixels() {
-        if pixel[3] > 0 {
-            bounds.0 = bounds.0.min(x);
-            bounds.1 = bounds.1.min(y);
-            bounds.2 = bounds.2.max(x);
-            bounds.3 = bounds.3.max(y);
-        }
-    }
-    let icon = image::imageops::crop_imm(
-        &icon,
-        bounds.0,
-        bounds.1,
-        bounds.2 - bounds.0 + 1,
-        bounds.3 - bounds.1 + 1,
-    )
-    .to_image();
-    let y = (icon.height() - text.height()) / 2;
-    // Match actual contours row by row, rather than their transparent rectangles.
-    let mut text_x = 0_i64;
-    for row in 0..text.height() {
-        let right = (0..icon.width()).rfind(|&x| icon.get_pixel(x, y + row)[3] > 16);
-        let left = (0..text.width()).find(|&x| text.get_pixel(x, row)[3] > 16);
-        if let (Some(right), Some(left)) = (right, left) {
-            text_x = text_x.max(right as i64 + 1 + 12 - left as i64);
-        }
-    }
-    let mut lockup = image::RgbaImage::new(
-        (text_x as u32 + text.width()).max(icon.width()),
-        icon.height(),
-    );
-    image::imageops::overlay(&mut lockup, &icon, 0, 0);
-    image::imageops::overlay(&mut lockup, &text, text_x, y as i64);
+    let lockup = vector::raster(1600, (1600.0 / vector::aspect()).round() as u32);
     lockup.save("assets/brand-lockup.png").unwrap();
     let mut forest = image::open("assets/brand-forest.png").unwrap().to_rgba8();
     let width = (forest.width() as f32 * 0.90) as u32;
     let height = width * lockup.height() / lockup.width();
-    let overlay = image::imageops::resize(
-        &lockup,
-        width,
-        height,
-        image::imageops::FilterType::Lanczos3,
-    );
+    let overlay = vector::raster(width, height);
     let x = (forest.width() - width) / 2;
     let y = (forest.height() - height) / 2;
     image::imageops::overlay(&mut forest, &overlay, x as i64, y as i64);
@@ -269,6 +270,39 @@ mod tests {
         for pixel in edges {
             assert_eq!(pixel[0], 255);
             assert_eq!([pixel[1], pixel[2]], [0, 0]);
+        }
+    }
+
+    #[test]
+    fn vector_texture_reuses_same_dpi_and_rerenders_when_pixel_size_changes() {
+        let ctx = egui::Context::default();
+        let mut previous_id = None;
+        for (frame, ppp) in [1.0, 1.0, 1.5, 1.5, 2.0].into_iter().enumerate() {
+            ctx.set_pixels_per_point(ppp);
+            let output = ctx.run(egui::RawInput::default(), |ctx| {
+                let texture = vector_texture(ctx, "cache-test", egui::vec2(200.0, 100.0));
+                if let Some(id) = previous_id {
+                    if frame == 1 || frame == 3 {
+                        assert_eq!(texture.id(), id);
+                    } else {
+                        assert_ne!(texture.id(), id);
+                    }
+                }
+                previous_id = Some(texture.id());
+            });
+            let upload = output
+                .textures_delta
+                .set
+                .iter()
+                .find(|(id, _)| Some(*id) == previous_id);
+            if frame == 1 || frame == 3 {
+                assert!(upload.is_none());
+            } else {
+                assert_eq!(
+                    upload.unwrap().1.image.size(),
+                    [(200.0 * ppp) as usize, (100.0 * ppp) as usize]
+                );
+            }
         }
     }
 
@@ -310,8 +344,8 @@ mod tests {
                     }
                 }
                 assert!(logo.is_positive());
-                assert!((logo.center().y - area.center().y).abs() < 0.1);
-                assert!((logo.center().x - area.center().x).abs() < 0.1);
+                assert!((logo.center().y - area.center().y).abs() <= 1.0 / ctx.pixels_per_point());
+                assert!((logo.center().x - area.center().x).abs() <= 1.0 / ctx.pixels_per_point());
                 assert!(area.contains_rect(logo));
             }
         }

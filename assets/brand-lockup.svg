@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="404" height="192" viewBox="32 32 404 192">
+<title>qBit Remote</title>
+<desc>Symmetric italic qb monogram and outlined geometric it Remote wordmark.</desc>
+<defs>
+ <linearGradient id="chrome" gradientUnits="userSpaceOnUse" x1="0" y1="40" x2="0" y2="216">
+  <stop offset="0" stop-color="#f1f8ff"/><stop offset=".32" stop-color="#8bacc8"/>
+  <stop offset=".385" stop-color="#fff"/><stop offset=".41" stop-color="#25e8f4"/>
+  <stop offset=".55" stop-color="#049aca"/><stop offset=".72" stop-color="#6536f0"/>
+  <stop offset=".76" stop-color="#d181ff"/><stop offset=".8" stop-color="#8510dd"/>
+  <stop offset="1" stop-color="#5005a6"/>
+ </linearGradient>
+ <linearGradient id="chrome-b" xlink:href="#chrome" gradientUnits="userSpaceOnUse" x1="0" y1="216" x2="0" y2="40"/>
+ <linearGradient id="type" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0" y2="36">
+  <stop offset="0" stop-color="#fff"/><stop offset=".28" stop-color="#a4b7ca"/>
+  <stop offset=".40" stop-color="#fff"/><stop offset=".46" stop-color="#72e3ff"/>
+  <stop offset=".74" stop-color="#087be7"/><stop offset="1" stop-color="#3024f1"/>
+ </linearGradient>
+ <path id="q" fill-rule="evenodd" d="M48 96 L56 88 H120 L128 96 V192 H140 L115 216 L90 192 H102 V168 H56 L48 160 Z M76 116 V140 H100 V116 Z"/>
+ <g id="word" fill-rule="evenodd">
+  <path d="M0 0 H7 V6 H0 Z M0 9 H7 V30 H0 Z"/>
+  <path transform="translate(10)" d="M5 2 H12 V9 H19 V15 H12 V24 H18 V30 H9 L5 26 V15 H0 V9 H5 Z"/>
+  <path transform="translate(38)" d="M0 0 H20 L26 6 V15 L19 20 L27 30 H17 L9 20 H8 V30 H0 Z M8 6 V14 H17 L18 13 V7 L17 6 Z"/>
+  <path id="e" transform="translate(68)" d="M0 15 L6 9 H20 L25 14 V22 H8 V24 H23 L19 30 H6 L0 25 Z M8 14 V18 H17 V14 Z"/>
+  <path transform="translate(97)" d="M0 9 H27 L33 15 V30 H25 V16 H20 V30 H13 V16 H8 V30 H0 Z"/>
+  <path transform="translate(135)" d="M0 15 L6 9 H19 L25 15 V24 L19 30 H6 L0 24 Z M8 15 V24 H17 V15 Z"/>
+  <path transform="translate(165)" d="M5 2 H12 V9 H19 V15 H12 V24 H18 V30 H9 L5 26 V15 H0 V9 H5 Z"/>
+  <use xlink:href="#e" transform="translate(121)"/>
+  <path d="M2 33 H214 L210 36 H-2 Z"/>
+ </g>
+</defs>
+<g transform="matrix(.94 0 -.3948 1 58.2144 0)" stroke-linejoin="miter">
+ <g fill="url(#chrome)" stroke="#07152e" stroke-width="3.6">
+  <use xlink:href="#q"/><use xlink:href="#q" transform="rotate(180 128 128)" fill="url(#chrome-b)"/>
+ </g>
+ <g fill="none" stroke="#bcd9ef" stroke-width=".85">
+  <use xlink:href="#q"/><use xlink:href="#q" transform="rotate(180 128 128)"/>
+ </g>
+</g>
+<g transform="translate(218 109) skewX(-23)" stroke-linejoin="miter">
+ <use xlink:href="#word" fill="url(#type)" stroke="#07152e" stroke-width="2.1" paint-order="stroke fill"/>
+ <use xlink:href="#word" fill="none" stroke="#b9dafa" stroke-width=".35"/>
+</g>
+</svg>

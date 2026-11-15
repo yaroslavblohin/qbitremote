@@ -12,6 +12,7 @@ mod credentials;
 #[cfg(target_os = "macos")]
 #[path = "macos_credentials.rs"]
 mod credentials;
+mod file_associations;
 mod file_icons;
 mod graphs;
 mod icon;

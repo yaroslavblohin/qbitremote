@@ -1,10 +1,13 @@
 #[path = "src/icon_pixels.rs"]
 mod icon_pixels;
+#[path = "src/magnet_pixels.rs"]
+mod magnet_pixels;
 
 use std::{env, fs, path::PathBuf, process::Command};
 
 fn main() {
     println!("cargo:rerun-if-changed=src/icon_pixels.rs");
+    println!("cargo:rerun-if-changed=src/magnet_pixels.rs");
     println!("cargo:rerun-if-changed=assets/logo.rgba");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=RC");
@@ -24,8 +27,13 @@ fn main() {
         );
     }
 
-    fs::write(out.join("app.ico"), icon()).unwrap();
-    fs::write(out.join("app.rc"), "1 ICON \"app.ico\"\n").unwrap();
+    fs::write(out.join("app.ico"), icon(false)).unwrap();
+    fs::write(out.join("magnet.ico"), icon(true)).unwrap();
+    fs::write(
+        out.join("app.rc"),
+        "1 ICON \"app.ico\"\n2 ICON \"magnet.ico\"\n",
+    )
+    .unwrap();
     let compiler = resource_compiler();
     let output = Command::new(&compiler)
         .current_dir(&out)
@@ -79,14 +87,18 @@ fn resource_compiler() -> PathBuf {
 }
 
 // ICO images use bottom-up BGRA DIBs and a padded 1-bit transparency mask.
-fn icon() -> Vec<u8> {
+fn icon(magnet: bool) -> Vec<u8> {
     let sizes = [16_u32, 24, 32, 48, 64, 128, 256];
     let mut result = vec![0, 0, 1, 0];
     result.extend_from_slice(&(sizes.len() as u16).to_le_bytes());
     let mut offset = 6 + sizes.len() * 16;
     let mut images = Vec::new();
     for size in sizes {
-        let pixels = icon_pixels::rgba(size);
+        let pixels = if magnet {
+            magnet_pixels::rgba(size)
+        } else {
+            icon_pixels::rgba(size)
+        };
         let stride = size.div_ceil(32) as usize * 4;
         let mut dib = Vec::new();
         for value in [40, size, size * 2] {

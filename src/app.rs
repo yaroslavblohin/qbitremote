@@ -728,6 +728,7 @@ impl ClientApp {
                     &mut self.settings.close_to_tray,
                     "Закрытие окна сворачивает в трей",
                 );
+                crate::file_associations::ui(ui);
                 ui.label("Масштаб интерфейса · поверх системного DPI");
                 if ui
                     .add(egui::Slider::new(&mut self.settings.zoom, 0.8..=1.5).suffix("×"))

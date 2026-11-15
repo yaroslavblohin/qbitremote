@@ -1,4 +1,7 @@
 #[cfg(windows)]
+#[path = "magnet_pixels.rs"]
+mod magnet_pixels;
+#[cfg(windows)]
 pub fn ui(ui: &mut eframe::egui::Ui) {
     use eframe::egui;
     ui.collapsing("Значок и ассоциации файлов", |ui| {
@@ -6,8 +9,16 @@ pub fn ui(ui: &mut eframe::egui::Ui) {
         let mut qb = ui.ctx().data_mut(|d| d.get_persisted::<bool>(id).unwrap_or(false));
         ui.horizontal(|ui| {
             ui.label("Значок .torrent:");
-            ui.selectable_value(&mut qb, false, "Магнит");
-            ui.selectable_value(&mut qb, true, "Логотип qb");
+            for (value, title) in [(false, "Магнит"), (true, "Логотип qb")] {
+                let texture_id = id.with(value);
+                let texture = ui.ctx().data_mut(|d| d.get_temp::<egui::TextureHandle>(texture_id)).unwrap_or_else(|| {
+                    let rgba = if value { crate::icon::rgba(64) } else { magnet_pixels::rgba(64) };
+                    let t = ui.ctx().load_texture(title, egui::ColorImage::from_rgba_unmultiplied([64, 64], &rgba), egui::TextureOptions::LINEAR);
+                    ui.ctx().data_mut(|d| d.insert_temp(texture_id, t.clone()));
+                    t
+                });
+                if ui.add(egui::ImageButton::new(egui::Image::new(&texture).fit_to_exact_size(egui::vec2(36.0, 36.0))).selected(qb == value)).on_hover_text(title).clicked() { qb = value; }
+            }
         });
         ui.ctx().data_mut(|d| d.insert_persisted(id, qb));
         ui.small("Применение регистрирует qBit Remote для .torrent и magnet-ссылок. Выберите его по умолчанию в настройках Windows.");
@@ -31,6 +42,21 @@ fn register(qb: bool) -> Result<(), String> {
     let command = format!("\"{exe}\" \"%1\"");
     let icon = format!("\"{exe}\",-{}", if qb { 1 } else { 2 });
     let values = [
+        (
+            "Software\\Classes\\Applications\\qbit-remote.exe\\DefaultIcon",
+            "",
+            icon.as_str(),
+        ),
+        (
+            "Software\\Classes\\Applications\\qbit-remote.exe\\shell\\open\\command",
+            "",
+            command.as_str(),
+        ),
+        (
+            "Software\\Classes\\Applications\\qbit-remote.exe\\SupportedTypes",
+            ".torrent",
+            "",
+        ),
         (
             "Software\\Classes\\qBitRemote.Torrent",
             "",

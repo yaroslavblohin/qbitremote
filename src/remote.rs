@@ -14,6 +14,7 @@ mod file_tree;
 mod pages;
 mod preferences;
 mod properties;
+mod tracker_rows;
 
 fn menu_group(ui: &mut egui::Ui, title: &str) {
     let p = crate::theme::palette(ui.ctx());
@@ -200,6 +201,7 @@ impl Remote {
     }
     #[cfg(feature = "ui-smoke")]
     pub fn smoke_fixture(&mut self) {
+        let now = chrono::Utc::now().timestamp();
         self.tab = match std::env::var("QBIT_SMOKE_PAGE").as_deref() {
             Ok("files") => 4,
             Ok("trackers") => 1,
@@ -257,8 +259,12 @@ impl Remote {
                     {"url":"** [DHT] **","status":2,"tier":-1,"num_seeds":0,"num_leeches":0,"num_peers":8,"num_downloaded":-1},
                     {"url":"** [PeX] **","status":2,"tier":-1,"num_seeds":0,"num_leeches":0,"num_peers":3,"num_downloaded":-1},
                     {"url":"** [LSD] **","status":2,"tier":-1,"num_seeds":0,"num_leeches":0,"num_peers":0,"num_downloaded":-1},
-                    {"url":"https://tracker.example.org/announce","status":2,"tier":0,"num_seeds":124,"num_leeches":18,"num_peers":32,"num_downloaded":1580},
-                    {"url":"udp://backup.example.org:6969/announce","status":4,"tier":1,"num_seeds":-1,"num_leeches":-1,"num_peers":-1,"num_downloaded":-1,"msg":"Не удалось связаться с трекером: время ожидания истекло"}
+                    {"url":"https://tracker.example.org/announce","status":2,"tier":0,"num_seeds":124,"num_leeches":18,"num_peers":32,"num_downloaded":1580,
+                     "next_announce":now + 1_320,"min_announce":now + 90,"endpoints":[
+                        {"name":"192.0.2.10:51413","bt_version":1,"status":2,"num_peers":32,"next_announce":now + 1_320,"min_announce":now + 90},
+                        {"name":"[2001:db8::10]:51413","bt_version":2,"status":6,"msg":"Сеть недоступна","next_announce":now + 60}
+                     ]},
+                    {"url":"udp://backup.example.org:6969/announce","status":5,"tier":1,"msg":"Время ожидания истекло","endpoints":[]}
                 ]),
             ),
             (
@@ -312,6 +318,12 @@ impl Remote {
     }
     pub fn sample_torrents(&mut self, torrents: &[Torrent]) {
         self.graphs.record(torrents);
+    }
+    pub fn details_tab(&self) -> usize {
+        self.tab
+    }
+    pub fn restore_details_tab(&mut self, tab: usize) {
+        self.tab = if tab <= 6 { tab } else { 0 };
     }
     pub fn clear(&mut self) {
         self.add_sources.clear();
@@ -997,6 +1009,20 @@ impl Remote {
         }
     }
     fn trackers(&mut self, ui: &mut egui::Ui, hash: &str, data: &Value) {
+        let trackers = data.as_array().map(Vec::as_slice).unwrap_or(&[]);
+        let detailed = trackers
+            .iter()
+            .any(|tracker| tracker.get("endpoints").is_some());
+        let scope = ui.id().with(("tracker-expanded", hash));
+        let default_open = cfg!(feature = "ui-smoke")
+            && std::env::var("QBIT_SMOKE_PAGE").as_deref() == Ok("trackers");
+        let rows = tracker_rows::visible_rows(trackers, |url| {
+            ui.data(|data| {
+                data.get_temp::<bool>(scope.with(url))
+                    .unwrap_or(default_open)
+            })
+        });
+        let now = chrono::Utc::now().timestamp();
         ui.horizontal(|ui| {
             if ui.button("Добавить трекеры").clicked() {
                 self.open_form(
@@ -1017,75 +1043,160 @@ impl Remote {
         });
         let palette = crate::theme::palette(ui.ctx());
         egui::ScrollArea::horizontal()
-            .id_salt("trackers-horizontal")
+            .id_salt(("trackers-horizontal", detailed))
             .show(ui, |ui| {
-                ui.set_min_width(920.0);
-                TableBuilder::new(ui)
-                    .id_salt("trackers-table")
+                ui.set_min_width(if detailed { 1140.0 } else { 920.0 });
+                let mut table = TableBuilder::new(ui)
+                    .id_salt(("trackers-table", detailed))
                     .striped(true)
                     .resizable(true)
                     .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                     .column(Column::remainder().at_least(200.0).clip(true))
-                    .column(Column::initial(100.0).at_least(90.0).clip(true))
-                    .columns(Column::initial(54.0).at_least(40.0).clip(true), 5)
-                    .column(Column::initial(120.0).at_least(80.0).clip(true))
+                    .column(Column::initial(115.0).at_least(90.0).clip(true))
+                    .column(Column::initial(54.0).at_least(40.0).clip(true));
+                if detailed {
+                    table = table.column(Column::initial(72.0).at_least(55.0).clip(true));
+                }
+                table = table
+                    .columns(Column::initial(54.0).at_least(40.0).clip(true), 4)
+                    .column(Column::initial(120.0).at_least(80.0).clip(true));
+                if detailed {
+                    table = table
+                        .column(Column::initial(88.0).at_least(70.0).clip(true))
+                        .column(Column::initial(83.0).at_least(70.0).clip(true));
+                }
+                let mut titles = vec!["Трекер / адрес анонса", "Состояние", "Уровень"];
+                if detailed {
+                    titles.push("Версия BT");
+                }
+                titles.extend(["Сиды", "Личи", "Пиры", "Скачан", "Сообщение"]);
+                if detailed {
+                    titles.extend(["След. анонс", "Мин. анонс"]);
+                }
+                titles.push("Действия");
+                table
                     .column(Column::exact(165.0))
                     .header(24.0, |mut header| {
-                        for title in [
-                            "Трекер",
-                            "Состояние",
-                            "Уровень",
-                            "Сиды",
-                            "Личи",
-                            "Пиры",
-                            "Скачан",
-                            "Сообщение",
-                            "Действия",
-                        ] {
+                        for title in titles {
                             header.col(|ui| {
-                                ui.weak(title);
+                                ui.add(egui::Label::new(RichText::new(title).weak()).truncate())
+                                    .on_hover_text(match title {
+                                        "След. анонс" => {
+                                            "Оставшееся время до следующего анонса"
+                                        }
+                                        "Мин. анонс" => {
+                                            "Оставшееся время до самого раннего допустимого анонса"
+                                        }
+                                        "Скачан" => {
+                                            "Число завершённых скачиваний по данным трекера"
+                                        }
+                                        _ => title,
+                                    });
                             });
                         }
                     })
                     .body(|body| {
-                        let trackers = data.as_array().map(Vec::as_slice).unwrap_or(&[]);
-                        body.rows(24.0, trackers.len(), |mut row| {
-                            let tracker = &trackers[row.index()];
+                        body.rows(24.0, rows.len(), |mut row| {
+                            let item = &rows[row.index()];
+                            let tracker = item.data;
                             let url = text(tracker, "url");
                             row.col(|ui| {
+                                let toggle_width = 16.0;
+                                let tracker_indent = toggle_width + ui.spacing().item_spacing.x;
+                                if item.kind == tracker_rows::Kind::Endpoint {
+                                    ui.add_space(tracker_indent + 20.0);
+                                    let address = tracker["name"]
+                                        .as_str()
+                                        .filter(|s| !s.is_empty())
+                                        .unwrap_or("—");
+                                    ui.add(egui::Label::new(address).truncate())
+                                        .on_hover_text(address)
+                                        .context_menu(|ui| {
+                                            if ui.button("Копировать адрес анонса").clicked()
+                                            {
+                                                ui.ctx().copy_text(address.to_owned());
+                                                ui.close_menu();
+                                            }
+                                        });
+                                    return;
+                                }
+                                if tracker_rows::can_expand(tracker) {
+                                    let count = tracker_rows::endpoints(tracker).len();
+                                    let id = scope.with(&url);
+                                    let open = ui.data(|data| {
+                                        data.get_temp::<bool>(id).unwrap_or(default_open)
+                                    });
+                                    let toggle = ui
+                                        .add_sized(
+                                            [toggle_width, 18.0],
+                                            egui::Button::new("").frame(false),
+                                        )
+                                        .on_hover_text(format!("Адреса анонса: {count}"));
+                                    let center = toggle.rect.center();
+                                    let offsets = if open {
+                                        [(-3.0, -2.5), (3.0, -2.5), (0.0, 3.0)]
+                                    } else {
+                                        [(-2.5, -3.0), (-2.5, 3.0), (3.0, 0.0)]
+                                    };
+                                    ui.painter().add(egui::Shape::convex_polygon(
+                                        offsets
+                                            .iter()
+                                            .map(|&(x, y)| center + egui::vec2(x, y))
+                                            .collect(),
+                                        ui.style().interact(&toggle).fg_stroke.color,
+                                        egui::Stroke::NONE,
+                                    ));
+                                    if toggle.clicked() {
+                                        ui.data_mut(|data| data.insert_temp(id, !open));
+                                        ui.ctx().request_repaint();
+                                    }
+                                } else if detailed {
+                                    ui.add_space(tracker_indent);
+                                }
                                 let display = url.trim_matches('*').trim();
                                 comment_links::show_truncated(ui, display);
                             });
                             row.col(|ui| {
-                                let (label, color) = match number(tracker, "status") {
-                                    0 => ("Отключён", palette.muted),
-                                    1 => ("Не обращались", palette.muted),
-                                    2 => ("Работает", palette.green),
-                                    3 => ("Обновляется", palette.blue),
-                                    4 => ("Ошибка", palette.red),
-                                    _ => ("Неизвестно", palette.muted),
-                                };
+                                let (label, color) = tracker_rows::status(tracker, palette);
                                 ui.add(
                                     egui::Label::new(RichText::new(label).color(color)).truncate(),
-                                );
+                                )
+                                .on_hover_text(label);
                             });
-                            for key in [
-                                "tier",
-                                "num_seeds",
-                                "num_leeches",
-                                "num_peers",
-                                "num_downloaded",
-                            ] {
+                            row.col(|ui| {
+                                if item.kind == tracker_rows::Kind::Tracker {
+                                    ui.label(
+                                        tracker["tier"]
+                                            .as_u64()
+                                            .map_or_else(|| "—".into(), |tier| tier.to_string()),
+                                    );
+                                }
+                            });
+                            if detailed {
                                 row.col(|ui| {
-                                    let n = number(tracker, key);
+                                    if item.kind == tracker_rows::Kind::Endpoint {
+                                        ui.label(
+                                            tracker["bt_version"]
+                                                .as_u64()
+                                                .filter(|version| *version > 0)
+                                                .map_or_else(
+                                                    || "—".into(),
+                                                    |version| format!("v{version}"),
+                                                ),
+                                        );
+                                    }
+                                });
+                            }
+                            for key in ["num_seeds", "num_leeches", "num_peers", "num_downloaded"] {
+                                row.col(|ui| {
                                     ui.with_layout(
                                         egui::Layout::right_to_left(egui::Align::Center),
                                         |ui| {
-                                            ui.label(if n < 0 {
-                                                "—".into()
-                                            } else {
-                                                n.to_string()
-                                            });
+                                            ui.label(
+                                                tracker[key]
+                                                    .as_u64()
+                                                    .map_or_else(|| "—".into(), |n| n.to_string()),
+                                            );
                                         },
                                     );
                                 });
@@ -1097,15 +1208,25 @@ impl Remote {
                                     if msg.is_empty() { "—" } else { &msg },
                                 );
                             });
+                            if detailed {
+                                for key in ["next_announce", "min_announce"] {
+                                    row.col(|ui| {
+                                        ui.label(tracker_rows::announce_time(tracker, key, now));
+                                    });
+                                }
+                            }
                             row.col(|ui| {
-                                if url.contains("://") {
+                                if item.kind == tracker_rows::Kind::Tracker && url.contains("://") {
                                     if ui.small_button("Изменить").clicked() {
                                         self.open_form(
                                             "Изменить трекер",
                                             "torrents/editTracker",
                                             vec![
                                                 ("hash".into(), hash.into()),
-                                                ("origUrl".into(), url.clone()),
+                                                (
+                                                    if detailed { "url" } else { "origUrl" }.into(),
+                                                    url.clone(),
+                                                ),
                                             ],
                                             vec![Field::new("newUrl", "Новый URL", &url)],
                                             "",

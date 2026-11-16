@@ -58,6 +58,43 @@ fn lockup(ui: &mut egui::Ui, height: f32, large: bool) {
         egui::pos2((area.center().x - width / 2.0).round(), top.round()),
         egui::vec2(width, width / 2.0),
     );
+    // Keep the approved silhouettes crisp; depth is painted behind the original.
+    let text_pos = egui::pos2(area.center().x, rect.bottom() + 8.0);
+    let depth = if large { 3.0 } else { 2.0 };
+    let shadow = |offset: egui::Vec2, alpha: u8| {
+        let alpha = if ui.visuals().dark_mode {
+            alpha
+        } else {
+            alpha / 3
+        };
+        let color = egui::Color32::from_black_alpha(alpha);
+        ui.painter().image(
+            texture.id(),
+            rect.translate(offset),
+            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+            color,
+        );
+        ui.painter().text(
+            text_pos + offset,
+            egui::Align2::CENTER_TOP,
+            "qBit Remote",
+            font(ui.ctx(), text_size),
+            color,
+        );
+    };
+    // A small distributed shadow gives a soft falloff around the short extrusion.
+    for y in -2_i32..=2 {
+        for x in -2_i32..=2 {
+            let weight = (3 - x.abs()) * (3 - y.abs());
+            shadow(
+                egui::vec2(depth + x as f32, depth + 1.0 + y as f32),
+                (weight * 2) as u8,
+            );
+        }
+    }
+    for step in (1..=4).rev() {
+        shadow(egui::Vec2::splat(depth * step as f32 / 4.0), 80);
+    }
     ui.painter().image(
         texture.id(),
         rect,
@@ -70,7 +107,7 @@ fn lockup(ui: &mut egui::Ui, height: f32, large: bool) {
         egui::Color32::from_rgb(24, 32, 43)
     };
     ui.painter().text(
-        egui::pos2(area.center().x, rect.bottom() + 8.0),
+        text_pos,
         egui::Align2::CENTER_TOP,
         "qBit Remote",
         font(ui.ctx(), text_size),

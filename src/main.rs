@@ -4,6 +4,8 @@ mod activation;
 mod add_torrent;
 mod api;
 mod app;
+#[cfg(windows)]
+mod autostart;
 mod columns;
 mod console;
 mod country_flags;
@@ -55,7 +57,16 @@ fn main() -> eframe::Result {
         icon::export_branding();
         return Ok(());
     }
-    let launch_files = match activation::files(std::env::args_os().skip(1)) {
+    let args = std::env::args_os().skip(1).collect::<Vec<_>>();
+    #[cfg(windows)]
+    let (autostart, hidden) = match args.as_slice() {
+        [flag] if flag == autostart::VISIBLE_ARG => (true, false),
+        [flag] if flag == autostart::HIDDEN_ARG => (true, true),
+        _ => (false, false),
+    };
+    #[cfg(windows)]
+    let args = if autostart { Vec::new() } else { args };
+    let launch_files = match activation::files(args) {
         Ok(files) => files,
         Err(error) => {
             rfd::MessageDialog::new()
@@ -70,6 +81,9 @@ fn main() -> eframe::Result {
     let _instance = match single_instance::InstanceGuard::acquire() {
         Ok(Some(guard)) => guard,
         Ok(None) => {
+            if autostart {
+                return Ok(());
+            }
             let args = launch_files
                 .into_iter()
                 .map(|p| p.into_os_string())
@@ -106,10 +120,14 @@ fn main() -> eframe::Result {
             ..Default::default()
         },
         Box::new(move |cc| {
-            let mut app = app::ClientApp::new(cc);
+            let mut app = app::TabbedApp::new(cc);
+            #[cfg(windows)]
+            if hidden {
+                app.start_hidden(&cc.egui_ctx);
+            }
             app.open_files(launch_files);
             #[cfg(all(feature = "ui-smoke", windows))]
-            let app = smoke::SmokeApp::new(app);
+            let app = smoke::SmokeApp::new(app, &cc.egui_ctx);
             Ok(Box::new(app))
         }),
     )

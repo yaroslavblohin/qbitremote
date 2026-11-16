@@ -666,7 +666,7 @@ pub fn worker(ctx: eframe::egui::Context) -> (Sender<Command>, Receiver<(u64, Ev
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     #[test]
     fn queue_down_changes_priority_and_preserves_all_selected_hashes() {
@@ -1333,7 +1333,7 @@ mod tests {
         }
     }
 
-    fn mock_server(
+    pub(crate) fn mock_server(
         replies: Vec<(&'static str, &'static str)>,
     ) -> (String, std::thread::JoinHandle<Vec<String>>) {
         use std::io::{Read, Write};

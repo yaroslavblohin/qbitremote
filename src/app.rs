@@ -1,12 +1,18 @@
 use crate::{
     api::{self, Command, Event},
-    model::{Settings, Torrent},
+    model::{ServerProfile, ServerView, Settings, Torrent},
 };
 use eframe::egui::{self, Color32, RichText};
 use egui_extras::{Column, TableBuilder};
 use std::sync::mpsc::{Receiver, Sender};
 
+#[path = "app/server_tabs.rs"]
+mod server_tabs;
+pub use server_tabs::TabbedApp;
+
 pub struct ClientApp {
+    tab_id: u64,
+    tab_action: Option<TabAction>,
     console: crate::console::Console,
     server_free_space: Option<u64>,
     add_flow: crate::add_torrent::AddFlow,
@@ -24,6 +30,7 @@ pub struct ClientApp {
     connection_epoch: u64,
     torrents: Vec<Torrent>,
     selected: Option<String>,
+    pending_details: Option<String>,
     selection: crate::selection::Selection,
     filter: usize,
     search: String,
@@ -43,6 +50,15 @@ pub struct ClientApp {
     #[cfg(any(windows, target_os = "macos"))]
     tray: Option<crate::tray::Tray>,
 }
+
+#[derive(Clone, Copy)]
+enum TabAction {
+    Open(usize),
+    New,
+    Close(usize),
+    Delete,
+}
+
 impl ClientApp {
     #[cfg(all(feature = "ui-smoke", windows))]
     pub fn smoke_tray_control(&mut self) -> crate::tray::WindowControl {
@@ -91,8 +107,10 @@ impl ClientApp {
         if std::env::var("QBIT_SMOKE_PAGE").as_deref() == Ok("add-torrent") {
             self.add_flow.smoke_fixture();
         }
-        self.settings.details_height = if std::env::var("QBIT_SMOKE_PAGE").as_deref() == Ok("files")
-        {
+        self.settings.details_height = if matches!(
+            std::env::var("QBIT_SMOKE_PAGE").as_deref(),
+            Ok("files" | "trackers")
+        ) {
             390.0
         } else {
             280.0
@@ -209,8 +227,19 @@ impl ClientApp {
         }
         settings.profiles_initialized = true;
         crate::columns::normalize(&mut settings.visible_columns);
-        if !settings.servers.is_empty() {
-            settings.select_server(settings.selected_server.min(settings.servers.len() - 1));
+        let tabs = settings.startup_server_tabs();
+        if let Some(index) = tabs
+            .iter()
+            .copied()
+            .find(|index| *index == settings.selected_server)
+            .or_else(|| tabs.first().copied())
+        {
+            settings.select_server(index);
+        } else {
+            settings.selected_server = settings.servers.len();
+            if !settings.servers.is_empty() {
+                settings.apply_profile(Settings::default().profile());
+            }
         }
         settings.theme.apply(ctx);
         settings.zoom = settings.zoom.clamp(0.8, 1.5);
@@ -223,12 +252,56 @@ impl ClientApp {
         };
         let password_result = crate::credentials::load(&settings);
         let password_error = password_result.as_ref().err().cloned();
-        let auto_connect = !settings.servers.is_empty()
+        let auto_connect = !tabs.is_empty()
             && settings.auto_connect
             && password_error.is_none()
             && !cfg!(feature = "ui-smoke");
         let (sort, descending) = crate::columns::restored_sort(&settings);
-        let mut app = Self {
+        let mut app = Self::session(
+            settings,
+            password_result.unwrap_or_default(),
+            tx,
+            rx,
+            sort,
+            descending,
+        );
+        #[cfg(any(windows, target_os = "macos"))]
+        {
+            app.tray = tray;
+            app = app.with_tray_notice(tray_error.or(password_error));
+        }
+        if auto_connect {
+            app.connect();
+        }
+        #[cfg(windows)]
+        if !cfg!(feature = "ui-smoke") {
+            match crate::activation::Listener::start(ctx.clone()) {
+                Ok(listener) => app.activation = Some(listener),
+                Err(error) => {
+                    app.notice = format!("Приём файлов из Windows недоступен: {error}");
+                    app.is_error = true;
+                }
+            }
+        }
+        app
+    }
+
+    fn session(
+        settings: Settings,
+        password: String,
+        tx: Sender<Command>,
+        rx: Receiver<(u64, Event)>,
+        sort: usize,
+        descending: bool,
+    ) -> Self {
+        let mut remote = crate::remote::Remote::default();
+        let pending_details = settings.server_view.as_ref().and_then(|view| {
+            remote.restore_details_tab(view.details_tab);
+            view.details_torrent.clone()
+        });
+        Self {
+            tab_id: 0,
+            tab_action: None,
             console: Default::default(),
             server_free_space: None,
             add_flow: Default::default(),
@@ -238,14 +311,15 @@ impl ClientApp {
             about_open: false,
             dragged_column: None,
             column_layout: Vec::new(),
-            remote: crate::remote::Remote::default(),
+            remote,
             settings,
-            password: password_result.unwrap_or_default(),
+            password,
             tx,
             rx,
             connection_epoch: 0,
             torrents: vec![],
             selected: None,
+            pending_details,
             selection: Default::default(),
             filter: 0,
             search: String::new(),
@@ -263,28 +337,15 @@ impl ClientApp {
             sort,
             descending,
             #[cfg(any(windows, target_os = "macos"))]
-            tray,
+            tray: None,
         }
-        .with_tray_notice(
-            #[cfg(any(windows, target_os = "macos"))]
-            tray_error.or(password_error),
-            #[cfg(not(any(windows, target_os = "macos")))]
-            None,
-        );
-        if auto_connect {
-            app.connect();
+    }
+    #[cfg(windows)]
+    pub fn start_hidden(&self, ctx: &egui::Context) {
+        if let Some(tray) = &self.tray {
+            tray.control.prevent_first_show();
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
         }
-        #[cfg(windows)]
-        if !cfg!(feature = "ui-smoke") {
-            match crate::activation::Listener::start(ctx.clone()) {
-                Ok(listener) => app.activation = Some(listener),
-                Err(error) => {
-                    app.notice = format!("Приём файлов из Windows недоступен: {error}");
-                    app.is_error = true;
-                }
-            }
-        }
-        app
     }
     pub fn open_files(&mut self, files: Vec<std::path::PathBuf>) {
         if files.is_empty() {
@@ -378,16 +439,20 @@ impl ClientApp {
         }
     }
     fn connect(&mut self) {
+        self.settings.save_server();
+        self.begin_connection();
+    }
+
+    fn begin_connection(&mut self) {
         self.server_free_space = None;
         self.add_flow.reset_session();
-        self.settings.save_server();
         self.connection_epoch += 1;
         self.remote.clear();
         self.delete = None;
         self.connecting = true;
         self.connected = false;
         self.torrents.clear();
-        self.selected = None;
+        self.remember_details_for_reconnect();
         self.selection.clear();
         self.add_open = false;
         self.links.clear();
@@ -411,7 +476,7 @@ impl ClientApp {
         self.connecting = false;
         self.remote.clear();
         self.torrents.clear();
-        self.selected = None;
+        self.remember_details_for_reconnect();
         self.selection.clear();
         self.delete = None;
         self.add_open = false;
@@ -419,20 +484,28 @@ impl ClientApp {
     }
 
     fn select_server(&mut self, index: usize) {
-        self.settings.save_server();
-        self.settings.select_server(index);
-        match crate::credentials::load(&self.settings) {
-            Ok(password) => {
-                self.password = password;
-                self.connect();
-            }
-            Err(error) => {
-                self.disconnect();
-                self.password.clear();
-                self.notice = error;
-                self.is_error = true;
-                self.settings_open = true;
-            }
+        self.tab_action = Some(TabAction::Open(index));
+    }
+    fn remember_details_for_reconnect(&mut self) {
+        if let Some(hash) = self.selected.take() {
+            self.pending_details = Some(hash);
+        }
+    }
+    fn view(&self) -> ServerView {
+        ServerView {
+            sort_column: crate::columns::COLUMNS[self.sort].key.to_owned(),
+            sort_descending: self.descending,
+            details_tab: self.remote.details_tab(),
+            details_torrent: self
+                .selected
+                .clone()
+                .or_else(|| self.pending_details.clone()),
+        }
+    }
+    fn profile_snapshot(&self) -> ServerProfile {
+        ServerProfile {
+            view: Some(self.view()),
+            ..self.settings.profile()
         }
     }
     fn collect_console_messages(&mut self) {
@@ -477,7 +550,6 @@ impl ClientApp {
                         self.notice = format!("Подключено. Пароль не сохранён: {error}");
                         self.is_error = true;
                     }
-                    self.settings.save_server();
                 }
                 Event::Remote { token, result } => self.remote.reply(token, result),
                 Event::Disconnected => {
@@ -488,7 +560,7 @@ impl ClientApp {
                     self.connected = false;
                     self.connecting = false;
                     self.torrents.clear();
-                    self.selected = None;
+                    self.remember_details_for_reconnect();
                     self.selection.clear();
                 }
                 Event::Torrents(torrents) => {
@@ -499,6 +571,12 @@ impl ClientApp {
                         .iter()
                         .map(|t| t.hash.clone())
                         .collect::<Vec<_>>();
+                    if let Some(hash) = self.pending_details.take() {
+                        if available.contains(&hash) {
+                            self.selection.click(&hash, &available, false, false, false);
+                            self.selected = Some(hash);
+                        }
+                    }
                     self.selection.retain(&available);
                     if self
                         .selected
@@ -556,7 +634,7 @@ impl ClientApp {
     }
     fn dialogs(&mut self, ctx: &egui::Context) {
         if !self.connected && !self.pending_files.is_empty() {
-            egui::Window::new("Торренты ожидают подключения").collapsible(false).default_width(450.0).show(ctx,|ui|{
+            egui::Window::new("Торренты ожидают подключения").id(egui::Id::new(("pending-files", self.tab_id))).collapsible(false).default_width(450.0).show(ctx,|ui|{
                 ui.label(format!("Файлов: {} · сервер: {}",self.pending_files.len(),self.settings.server_name));
                 ui.label("После подключения откроется диалог выбора файлов. Добавление на сервер выполняется только после подтверждения.");
                 egui::ScrollArea::vertical().max_height(150.0).show(ui,|ui|{for file in &self.pending_files{ui.label(file.file_name().unwrap_or_default().to_string_lossy());}});
@@ -586,6 +664,7 @@ impl ClientApp {
             });
         let mut open = self.settings_open;
         egui::Window::new("Подключение и настройки")
+            .id(egui::Id::new(("profile-settings", self.tab_id)))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -595,41 +674,16 @@ impl ClientApp {
                 ui.horizontal(|ui| {
                     self.server_picker(ui, "settings-servers");
                     if ui.button("+ Сервер").clicked() {
-                        self.settings.save_server();
-                        self.disconnect();
-                        self.settings.selected_server = self.settings.servers.len();
-                        self.settings.server_name =
-                            format!("Сервер {}", self.settings.servers.len() + 1);
-                        self.settings.address = "http://localhost:8080".into();
-                        self.settings.username = "admin".into();
-                        self.settings.remember_password = true;
-                        self.settings.saved_password = None;
-                        self.settings.path_mappings.clear();
-                        self.password.clear();
-                        self.settings.save_server();
+                        self.tab_action = Some(TabAction::New);
                     }
                     if ui
                         .add_enabled(
-                            !self.connecting && !self.settings.servers.is_empty(),
+                            !self.connecting && self.settings.selected_server < self.settings.servers.len(),
                             egui::Button::new("Удалить профиль"),
                         )
                         .clicked()
                     {
-                        self.disconnect();
-                        self.settings.servers.remove(self.settings.selected_server);
-                        if self.settings.servers.is_empty() {
-                            self.settings.selected_server = 0;
-                            self.settings.path_mappings.clear();
-                            self.settings.server_name = "Основной сервер".into();
-                            self.settings.address = "http://localhost:8080".into();
-                            self.settings.username = "admin".into();
-                            self.settings.saved_password = None;
-                            self.password.clear();
-                        } else {
-                            self.settings.select_server(0);
-                            self.password =
-                                crate::credentials::load(&self.settings).unwrap_or_default();
-                        }
+                        self.tab_action = Some(TabAction::Delete);
                     }
                 });
                 ui.label("Удалённый сервер qBittorrent");
@@ -664,6 +718,9 @@ impl ClientApp {
                             self.is_error = false;
                         }
                     }
+                    if address_changed || username_changed {
+                        self.pending_details = None;
+                    }
                 });
                 if ui
                     .add_enabled(
@@ -691,7 +748,7 @@ impl ClientApp {
                 crate::path_mapping::settings_ui(ui, &mut self.settings.path_mappings);
                 ui.checkbox(
                     &mut self.settings.auto_connect,
-                    "Подключаться к выбранному серверу при запуске",
+                    "Подключаться к серверам открытых вкладок при запуске",
                 );
                 if ui
                     .add_enabled(!self.connecting, egui::Button::new("Сохранить профиль"))
@@ -731,6 +788,8 @@ impl ClientApp {
                     &mut self.settings.close_to_tray,
                     "Закрытие окна сворачивает в трей",
                 );
+                #[cfg(windows)]
+                crate::autostart::ui(ui);
                 crate::file_associations::ui(ui);
                 ui.label("Масштаб интерфейса · поверх системного DPI");
                 if ui
@@ -746,6 +805,7 @@ impl ClientApp {
         self.settings_open = open && self.settings_open;
         let mut add_open = self.add_open;
         egui::Window::new("Добавить торрент")
+            .id(egui::Id::new(("add-torrent-links", self.tab_id)))
             .open(&mut add_open)
             .collapsible(false)
             .default_width(480.0)
@@ -800,6 +860,7 @@ impl ClientApp {
         self.add_open = add_open && self.add_open;
         if let Some((hash, name)) = self.delete.clone() {
             egui::Window::new("Удалить выбранные торренты?")
+                .id(egui::Id::new(("confirm-delete", self.tab_id)))
                 .collapsible(false)
                 .resizable(false)
                 .show(ctx, |ui| {
@@ -1024,19 +1085,20 @@ impl ClientApp {
         });
     }
 }
-impl eframe::App for ClientApp {
+impl ClientApp {
     fn auto_save_interval(&self) -> std::time::Duration {
         std::time::Duration::from_secs(3)
     }
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         self.settings.sort_column = crate::columns::COLUMNS[self.sort].key.to_owned();
         self.settings.sort_descending = self.descending;
-        if !self.settings.servers.is_empty() {
+        self.settings.server_view = Some(self.view());
+        if self.settings.selected_server < self.settings.servers.len() {
             self.settings.save_server();
         }
         eframe::set_value(storage, "settings", &self.settings);
     }
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn show_navigation(&mut self, ctx: &egui::Context) {
         if crate::theme::current(ctx) != self.settings.theme {
             self.settings.theme.apply(ctx);
         }
@@ -1071,7 +1133,6 @@ impl eframe::App for ClientApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
         }
-        self.main_menu(ctx);
         crate::status_bar::show(
             ctx,
             &crate::status_bar::State {
@@ -1085,11 +1146,22 @@ impl eframe::App for ClientApp {
                 selected: self.selection.hashes.len(),
             },
         );
-        egui::SidePanel::left("sidebar")
+        egui::SidePanel::left(egui::Id::new(("sidebar", self.tab_id)))
             .exact_width(218.0)
             .resizable(false)
             .frame(egui::Frame::new().fill(palette.sidebar).inner_margin(14.0))
             .show(ctx, |ui| {
+                let bounds = ui.clip_rect();
+                if bounds.is_positive() {
+                    let mut background = egui::Mesh::default();
+                    background.colored_vertex(bounds.left_top(), palette.sidebar_top);
+                    background.colored_vertex(bounds.right_top(), palette.sidebar_top);
+                    background.colored_vertex(bounds.right_bottom(), palette.sidebar);
+                    background.colored_vertex(bounds.left_bottom(), palette.sidebar);
+                    background.add_triangle(0, 1, 2);
+                    background.add_triangle(0, 2, 3);
+                    ui.painter().add(background);
+                }
                 egui::ScrollArea::vertical()
                     .id_salt("navigation")
                     .show(ui, |ui| {
@@ -1103,7 +1175,7 @@ impl eframe::App for ClientApp {
                             )
                             .truncate(),
                         )
-                        .on_hover_text("Переключение и управление — в меню «Серверы»");
+                        .on_hover_text("Переключение серверов — во вкладках над списком");
                         ui.add_space(24.0);
                         ui.label(RichText::new("ТОРРЕНТЫ").size(10.0).color(palette.muted));
                         for (index, label) in [
@@ -1157,16 +1229,25 @@ impl eframe::App for ClientApp {
                         }
                     });
             });
+    }
+
+    fn show_content(&mut self, ctx: &egui::Context) {
+        let palette = self.settings.theme.palette();
         if self.remote.page == crate::remote::Page::Torrents {
             if let Some(t) = self
                 .torrents
                 .iter()
                 .find(|t| Some(&t.hash) == self.selected.as_ref())
             {
-                let (height, close) =
-                    details_panel(ctx, self.settings.details_height, &t.name, |ui| {
+                let (height, close) = details_panel(
+                    ctx,
+                    self.tab_id,
+                    self.settings.details_height,
+                    &t.name,
+                    |ui| {
                         self.remote.details(ui, t, &self.settings.path_mappings);
-                    });
+                    },
+                );
                 self.settings.details_height = height;
                 if close {
                     self.selection.clear();
@@ -1343,7 +1424,7 @@ impl eframe::App for ClientApp {
                 .sum::<f32>()
                 .max(ui.available_width());
             egui::ScrollArea::horizontal()
-                .id_salt("torrent-columns-scroll")
+                .id_salt(("torrent-columns-scroll", self.tab_id))
                 .show(ui, |ui| {
                     ui.set_width(table_width);
                     let keys: Vec<_> = visible.iter().map(|(_, c)| c.key).collect();
@@ -1639,12 +1720,13 @@ fn torrent_cell_text(ui: &mut egui::Ui, text: &str, color: Color32) -> egui::Res
 
 fn details_panel(
     ctx: &egui::Context,
+    tab_id: u64,
     height: f32,
     name: &str,
     contents: impl FnOnce(&mut egui::Ui),
 ) -> (f32, bool) {
     let mut close = false;
-    let panel = egui::TopBottomPanel::bottom("details-stable")
+    let panel = egui::TopBottomPanel::bottom(egui::Id::new(("details-stable", tab_id)))
         .resizable(true)
         .default_height(height)
         .min_height(170.0)
@@ -2177,7 +2259,7 @@ mod tests {
                 ..Default::default()
             };
             let _ = ctx.run(input, |ctx| {
-                let (height, close) = details_panel(ctx, 350.0, "Torrent", |ui| {
+                let (height, close) = details_panel(ctx, 0, 350.0, "Torrent", |ui| {
                     for _ in 0..count {
                         ui.label("Information");
                     }

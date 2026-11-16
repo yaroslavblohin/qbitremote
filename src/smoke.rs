@@ -1,18 +1,18 @@
 //! Opt-in renderer smoke test. Never included in the normal build.
-use crate::app::ClientApp;
+use crate::app::TabbedApp;
 use eframe::{egui, App};
 use std::time::{Duration, Instant};
 
 pub struct SmokeApp {
-    app: ClientApp,
+    app: TabbedApp,
     started: Instant,
     requested: bool,
     context_click_stage: u8,
     lifecycle: Option<std::thread::JoinHandle<()>>,
 }
 impl SmokeApp {
-    pub fn new(mut app: ClientApp) -> Self {
-        app.smoke_fixture();
+    pub fn new(mut app: TabbedApp, ctx: &egui::Context) -> Self {
+        app.smoke_fixture(ctx);
         let lifecycle = if std::env::var_os("QBIT_SMOKE_TRAY").is_some() {
             let control = app.smoke_tray_control();
             Some(std::thread::spawn(move || {
@@ -31,6 +31,12 @@ impl SmokeApp {
                     }
                 };
                 std::thread::sleep(Duration::from_secs(1));
+                if std::env::args_os().any(|arg| arg == crate::autostart::HIDDEN_ARG) {
+                    assert!(!control.visible(), "login launch must start hidden");
+                    click(tray_icon::MouseButton::Left);
+                    wait_for(true);
+                    println!("Hidden login launch and tray restore passed");
+                }
                 for cycle in 0..10 {
                     println!("Tray cycle {cycle}: closing");
                     control.close_to_tray();

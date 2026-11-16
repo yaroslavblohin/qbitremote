@@ -12,6 +12,32 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     SW_RESTORE, SW_SHOWNOACTIVATE, WM_CLOSE,
 };
 
+unsafe extern "system" fn skip_startup_show(
+    hwnd: windows_sys::Win32::Foundation::HWND,
+    message: u32,
+    wparam: usize,
+    lparam: isize,
+    id: usize,
+    _data: usize,
+) -> isize {
+    use windows_sys::Win32::UI::{
+        Shell::{DefSubclassProc, RemoveWindowSubclass},
+        WindowsAndMessaging::{
+            SWP_NOACTIVATE, SWP_SHOWWINDOW, WINDOWPOS, WM_NCDESTROY, WM_WINDOWPOSCHANGING,
+        },
+    };
+    if message == WM_WINDOWPOSCHANGING {
+        let position = &mut *(lparam as *mut WINDOWPOS);
+        if position.flags & SWP_SHOWWINDOW != 0 {
+            position.flags = (position.flags & !SWP_SHOWWINDOW) | SWP_NOACTIVATE;
+            RemoveWindowSubclass(hwnd, Some(skip_startup_show), id);
+        }
+    } else if message == WM_NCDESTROY {
+        RemoveWindowSubclass(hwnd, Some(skip_startup_show), id);
+    }
+    DefSubclassProc(hwnd, message, wparam, lparam)
+}
+
 #[derive(Clone)]
 pub struct WindowControl {
     hwnd: isize,
@@ -20,6 +46,18 @@ pub struct WindowControl {
     suppress_left_release: Arc<AtomicBool>,
 }
 impl WindowControl {
+    pub fn prevent_first_show(&self) {
+        // eframe 0.31 unconditionally shows the native window after its first render.
+        // Suppress that one show so a background login does not flash or take focus.
+        unsafe {
+            windows_sys::Win32::UI::Shell::SetWindowSubclass(
+                self.hwnd as _,
+                Some(skip_startup_show),
+                0,
+                0,
+            );
+        }
+    }
     pub fn quitting(&self) -> bool {
         self.quitting.load(Ordering::Acquire)
     }

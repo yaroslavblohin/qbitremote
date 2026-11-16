@@ -9,9 +9,12 @@ pub struct Settings {
     pub column_widths: std::collections::BTreeMap<String, f32>,
     pub sort_column: String,
     pub sort_descending: bool,
+    #[serde(skip)]
+    pub server_view: Option<ServerView>,
     pub servers: Vec<ServerProfile>,
     pub profiles_initialized: bool,
     pub selected_server: usize,
+    pub open_server_tabs: Option<Vec<usize>>,
     pub server_name: String,
     pub auto_connect: bool,
     pub details_height: f32,
@@ -32,19 +35,38 @@ pub struct ServerProfile {
     pub username: String,
     pub remember_password: bool,
     pub saved_password: Option<SavedPassword>,
+    #[serde(default)]
+    pub view: Option<ServerView>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ServerView {
+    pub sort_column: String,
+    pub sort_descending: bool,
+    pub details_tab: usize,
+    pub details_torrent: Option<String>,
 }
 
 impl Settings {
+    pub fn startup_server_tabs(&self) -> Vec<usize> {
+        let Some(saved) = &self.open_server_tabs else {
+            return if self.servers.is_empty() {
+                Vec::new()
+            } else {
+                vec![self.selected_server.min(self.servers.len() - 1)]
+            };
+        };
+        let mut seen = std::collections::HashSet::new();
+        saved
+            .iter()
+            .copied()
+            .filter(|index| *index < self.servers.len() && seen.insert(*index))
+            .collect()
+    }
+
     pub fn save_server(&mut self) {
         self.profiles_initialized = true;
-        let profile = ServerProfile {
-            path_mappings: self.path_mappings.clone(),
-            name: self.server_name.clone(),
-            address: self.address.clone(),
-            username: self.username.clone(),
-            remember_password: self.remember_password,
-            saved_password: self.saved_password.clone(),
-        };
+        let profile = self.profile();
         if let Some(slot) = self.servers.get_mut(self.selected_server) {
             *slot = profile;
         } else {
@@ -53,15 +75,36 @@ impl Settings {
         }
     }
 
+    pub fn profile(&self) -> ServerProfile {
+        ServerProfile {
+            path_mappings: self.path_mappings.clone(),
+            name: self.server_name.clone(),
+            address: self.address.clone(),
+            username: self.username.clone(),
+            remember_password: self.remember_password,
+            saved_password: self.saved_password.clone(),
+            view: self.server_view.clone(),
+        }
+    }
+
     pub fn select_server(&mut self, index: usize) {
         if let Some(profile) = self.servers.get(index).cloned() {
             self.selected_server = index;
-            self.path_mappings = profile.path_mappings;
-            self.server_name = profile.name;
-            self.address = profile.address;
-            self.username = profile.username;
-            self.remember_password = profile.remember_password;
-            self.saved_password = profile.saved_password;
+            self.apply_profile(profile);
+        }
+    }
+
+    pub fn apply_profile(&mut self, profile: ServerProfile) {
+        self.path_mappings = profile.path_mappings;
+        self.server_name = profile.name;
+        self.address = profile.address;
+        self.username = profile.username;
+        self.remember_password = profile.remember_password;
+        self.saved_password = profile.saved_password;
+        self.server_view = profile.view;
+        if let Some(view) = &self.server_view {
+            self.sort_column.clone_from(&view.sort_column);
+            self.sort_descending = view.sort_descending;
         }
     }
 }
@@ -81,9 +124,11 @@ impl Default for Settings {
             column_widths: Default::default(),
             sort_column: "name".into(),
             sort_descending: false,
+            server_view: None,
             servers: Vec::new(),
             profiles_initialized: false,
             selected_server: 0,
+            open_server_tabs: None,
             server_name: "Основной сервер".into(),
             auto_connect: true,
             details_height: 280.0,

@@ -2,7 +2,10 @@
 
 Клиент на Rust для управления **удалённым qBittorrent** через Web UI API. Текущая версия — **0.3.18**. Проверенная готовая сборка — **Windows**; порт macOS остаётся экспериментальным и требует нативной проверки.
 
-![qBit Remote — qbr](assets/brand-presentation.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/readme-logo-dark.png">
+  <img src="docs/readme-logo-light.png" alt="Логотип qBit Remote с объёмной тенью" width="300">
+</picture>
 
 [Инструкция Windows](Release/README.md) · [История изменений](CHANGELOG.md) · [Проверки](docs/TESTING.md) · [Аудит целостности](docs/INTEGRITY.md) · [macOS](docs/MACOS.md)
 
@@ -27,7 +30,7 @@
 
 Темы показаны в порядке **Graphite → White → Marine Dark**. Все 23 снимка сделаны в версии **0.3.18** на демонстрационных данных без подключения к серверу.
 
-**1. Graphite Theme** — тёмная тема по умолчанию.
+**1. Graphite Theme** — тёмная тема по умолчанию, открыты вкладки двух серверов.
 
 ![Graphite Theme](docs/screenshots/graphite.png)
 
@@ -74,7 +77,7 @@
 
 ![Пиры](docs/screenshots/peers.png)
 
-Компактная таблица трекеров:
+Трекеры с раскрытыми адресами IPv4 и IPv6, версиями BT и временем до анонса:
 
 ![Трекеры](docs/screenshots/trackers.png)
 

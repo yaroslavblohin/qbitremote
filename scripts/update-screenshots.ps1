@@ -25,13 +25,14 @@ try {
         Copy-Item -LiteralPath dist/ui-smoke.png -Destination "docs/screenshots/$page.png"
     }
     $env:QBIT_SMOKE_THEME = 'graphite'
-    $env:QBIT_SMOKE_PAGE = 'files'
+    $env:QBIT_SMOKE_PAGE = 'server-tabs'
     Remove-Item -LiteralPath dist/ui-smoke.png -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath dist/ui-smoke-state.ron -ErrorAction SilentlyContinue
     & ./target/debug/qbit-remote.exe
     if ($LASTEXITCODE -ne 0) { throw 'Screenshot failed: graphite' }
     Copy-Item -LiteralPath dist/ui-smoke.png -Destination docs/screenshots/graphite.png
     $env:QBIT_SMOKE_THEME = 'white'
+    $env:QBIT_SMOKE_PAGE = 'files'
     Remove-Item -LiteralPath dist/ui-smoke.png -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath dist/ui-smoke-state.ron -ErrorAction SilentlyContinue
     & ./target/debug/qbit-remote.exe
@@ -69,7 +70,7 @@ try {
         @{ Page = 'graph-disabled'; Destination = 'docs/screenshots/graph-disabled.png' },
         @{ Page = 'console'; Destination = 'docs/screenshots/console.png' },
         @{ Page = 'peers'; Destination = 'docs/screenshots/peers.png' },
-        @{ Page = 'trackers'; Destination = 'docs/screenshots/trackers.png' },
+        @{ Page = 'trackers'; Destination = 'docs/screenshots/trackers.png'; Zoom = '0.8' },
         @{ Page = 'about'; Destination = 'docs/screenshots/about.png' },
         @{ Page = 'associations'; Destination = 'docs/screenshots/file-associations.png' },
         @{ Page = 'pieces'; Destination = 'docs/screenshots/pieces.png' },
@@ -80,6 +81,7 @@ try {
         @{ Page = 'torrents'; Destination = 'docs/status-bar.png' }
     )) {
         $env:QBIT_SMOKE_PAGE = $entry.Page
+        $env:QBIT_SMOKE_ZOOM = if ($entry.Zoom) { $entry.Zoom } else { '1' }
         Remove-Item -LiteralPath dist/ui-smoke.png, dist/ui-smoke-state.ron -ErrorAction SilentlyContinue
         & ./target/debug/qbit-remote.exe
         if ($LASTEXITCODE -ne 0) { throw "Screenshot failed: $($entry.Page)" }

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 312 180">
+<title>qBit Remote — qbr</title>
+<g fill="none" stroke-width="26" stroke-linecap="round" stroke-linejoin="round">
+<g stroke="#18202b"><circle cx="58" cy="90" r="35"/><path d="M93 90V151"/></g>
+<g stroke="#18202b" transform="translate(224 180) rotate(180)"><circle cx="58" cy="90" r="35"/><path d="M93 90V151"/></g>
+<path stroke="#18202b" d="M239 125V90C239 67 258 61 289 61"/>
+</g></svg>

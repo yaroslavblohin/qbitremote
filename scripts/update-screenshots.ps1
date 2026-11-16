@@ -71,6 +71,7 @@ try {
         @{ Page = 'peers'; Destination = 'docs/screenshots/peers.png' },
         @{ Page = 'trackers'; Destination = 'docs/screenshots/trackers.png' },
         @{ Page = 'about'; Destination = 'docs/screenshots/about.png' },
+        @{ Page = 'associations'; Destination = 'docs/screenshots/file-associations.png' },
         @{ Page = 'pieces'; Destination = 'docs/screenshots/pieces.png' },
         @{ Page = 'torrent-graph'; Destination = 'docs/screenshots/torrent-graph.png' },
         @{ Page = 'actions-bottom'; Destination = 'docs/screenshots/actions-bottom.png' },

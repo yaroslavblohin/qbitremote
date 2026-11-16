@@ -63,6 +63,9 @@ impl ClientApp {
             _ => crate::theme::Theme::Graphite,
         };
         self.remote.smoke_fixture();
+        if std::env::var("QBIT_SMOKE_PAGE").as_deref() == Ok("associations") {
+            self.settings_open = true;
+        }
         if std::env::var("QBIT_SMOKE_PAGE").as_deref() == Ok("console") {
             self.console.open = true;
             self.console.record("Добавлено: 1".into(), false);

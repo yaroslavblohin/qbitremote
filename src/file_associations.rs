@@ -1,30 +1,35 @@
 #[cfg(windows)]
-#[path = "magnet_pixels.rs"]
-mod magnet_pixels;
+#[path = "torrent_icons.rs"]
+mod torrent_icons;
 #[cfg(windows)]
 pub fn ui(ui: &mut eframe::egui::Ui) {
     use eframe::egui;
-    ui.collapsing("Значок и ассоциации файлов", |ui| {
-        let id = egui::Id::new("torrent-file-icon-qb");
-        let mut qb = ui.ctx().data_mut(|d| d.get_persisted::<bool>(id).unwrap_or(false));
-        ui.horizontal(|ui| {
-            ui.label("Значок .torrent:");
-            for (value, title) in [(false, "Магнит"), (true, "Логотип qb")] {
-                let texture_id = id.with(value);
+    let preview = cfg!(feature = "ui-smoke")
+        && std::env::var("QBIT_SMOKE_PAGE").as_deref() == Ok("associations");
+    let section = eframe::egui::CollapsingHeader::new("Значок и ассоциации файлов")
+        .default_open(preview)
+        .show(ui, |ui| {
+        let id = egui::Id::new("torrent-file-icon-resource");
+        let mut selected = ui.ctx().data_mut(|d| d.get_persisted::<u32>(id).unwrap_or(2));
+        if !torrent_icons::ICONS.iter().any(|icon| icon.resource == selected) { selected = 2; }
+        ui.label("Значок .torrent:");
+        ui.horizontal_wrapped(|ui| {
+            for icon in torrent_icons::ICONS {
+                let texture_id = id.with(icon.resource);
                 let texture = ui.ctx().data_mut(|d| d.get_temp::<egui::TextureHandle>(texture_id)).unwrap_or_else(|| {
-                    let rgba = if value { crate::icon::rgba(64) } else { magnet_pixels::rgba(64) };
-                    let t = ui.ctx().load_texture(title, egui::ColorImage::from_rgba_unmultiplied([64, 64], &rgba), egui::TextureOptions::LINEAR);
+                    let rgba = torrent_icons::resize(&icon.decode(), 128);
+                    let t = ui.ctx().load_texture(icon.title, egui::ColorImage::from_rgba_unmultiplied([128, 128], &rgba), egui::TextureOptions::LINEAR);
                     ui.ctx().data_mut(|d| d.insert_temp(texture_id, t.clone()));
                     t
                 });
-                if ui.add(egui::ImageButton::new(egui::Image::new(&texture).fit_to_exact_size(egui::vec2(36.0, 36.0))).selected(qb == value)).on_hover_text(title).clicked() { qb = value; }
+                if ui.add(egui::ImageButton::new(egui::Image::new(&texture).fit_to_exact_size(egui::vec2(48.0, 48.0))).selected(selected == icon.resource)).on_hover_text(icon.title).clicked() { selected = icon.resource; }
             }
         });
-        ui.ctx().data_mut(|d| d.insert_persisted(id, qb));
+        ui.ctx().data_mut(|d| d.insert_persisted(id, selected));
         ui.small("Применение регистрирует qBit Remote для .torrent и magnet-ссылок. Выберите его по умолчанию в настройках Windows.");
         let status_id = id.with("status");
         if ui.button("Применить значок и зарегистрировать ассоциации").clicked() {
-            let result = register(qb).map(|()| "Регистрация обновлена. Выберите qBit Remote в настройках Windows.".to_owned()).unwrap_or_else(|e| e);
+            let result = register(selected).map(|()| "Регистрация обновлена. Выберите qBit Remote в настройках Windows.".to_owned()).unwrap_or_else(|e| e);
             ui.ctx().data_mut(|d| d.insert_temp(status_id, result));
         }
         if ui.button("Приложения по умолчанию в Windows…").clicked() {
@@ -32,15 +37,18 @@ pub fn ui(ui: &mut eframe::egui::Ui) {
         }
         if let Some(status) = ui.ctx().data_mut(|d| d.get_temp::<String>(status_id)) { ui.label(status); }
     });
+    if preview {
+        section.header_response.scroll_to_me(Some(egui::Align::Min));
+    }
 }
 
 #[cfg(windows)]
-fn register(qb: bool) -> Result<(), String> {
+fn register(resource: u32) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let exe = exe.to_string_lossy();
     let command = format!("\"{exe}\" \"%1\"");
-    let icon = format!("\"{exe}\",-{}", if qb { 1 } else { 2 });
+    let icon = format!("\"{exe}\",-{resource}");
     let values = [
         (
             "Software\\Classes\\Applications\\qbit-remote.exe\\DefaultIcon",

@@ -159,7 +159,12 @@ impl App for SmokeApp {
         if self.lifecycle.is_some() {
             return;
         }
-        if !self.requested && self.started.elapsed() > Duration::from_secs(2) {
+        let delay = if std::env::var("QBIT_SMOKE_PAGE").as_deref() == Ok("associations") {
+            8
+        } else {
+            2
+        };
+        if !self.requested && self.started.elapsed() > Duration::from_secs(delay) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
             self.requested = true;
         }

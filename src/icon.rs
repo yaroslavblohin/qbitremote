@@ -53,8 +53,8 @@ fn lockup(ui: &mut egui::Ui, height: f32, large: bool) {
     );
     let width = area.width().min(if large { 300.0 } else { 160.0 });
     let text_size = if large { 32.0 } else { 23.0 };
-    // The texture includes transparent padding below the q descender.
-    let gap = if large { 8.0 } else { -3.0 };
+    // Compensate for the texture's bottom padding in proportion to the monogram width.
+    let gap = -width * (3.0 / 160.0);
     let total = width / 2.0 + gap + text_size * 1.2;
     let top = area.center().y - total / 2.0;
     let scale = ui.ctx().pixels_per_point();

@@ -41,23 +41,25 @@ fn letter(x: f64, y: f64) -> Option<usize> {
     }
     None
 }
-pub fn rgba(size: u32) -> Vec<u8> {
+pub fn rasterize(size: u32, extent: f64) -> Vec<u8> {
     let samples = if size <= 64 { 8 } else { 2 };
     let mut out = Vec::with_capacity((size * size * 4) as usize);
     let colors = [
         [0.0, 100.0, 240.0],
         [0.0, 185.0, 230.0],
-        [0.0, 184.0, 194.0],
+        [34.0, 197.0, 94.0],
     ];
     for py in 0..size {
         for px in 0..size {
             let mut sum = [0.0; 4];
             for sy in 0..samples {
                 for sx in 0..samples {
-                    let x = (px as f64 + (sx as f64 + 0.5) / samples as f64) * 320.0 / size as f64
-                        - 4.0;
-                    let y = (py as f64 + (sy as f64 + 0.5) / samples as f64) * 320.0 / size as f64
-                        - 70.0;
+                    let x = 156.0
+                        + ((px as f64 + (sx as f64 + 0.5) / samples as f64) / size as f64 - 0.5)
+                            * extent;
+                    let y = 90.0
+                        + ((py as f64 + (sy as f64 + 0.5) / samples as f64) / size as f64 - 0.5)
+                            * extent;
                     if let Some(index) = letter(x, y) {
                         for (channel, value) in sum[..3].iter_mut().enumerate() {
                             *value += colors[index][channel];
@@ -78,12 +80,60 @@ pub fn rgba(size: u32) -> Vec<u8> {
     }
     out
 }
+
+/// Windows shell, window and tray artwork, padded for the cast shadow.
+pub fn system_rgba(size: u32) -> Vec<u8> {
+    let face = rasterize(size, 344.0);
+    let mut result = face.clone();
+    let depth = (size as f32 * 0.025).max(0.65);
+    let blur = depth * 0.55;
+    let alpha = |x: i32, y: i32| {
+        if (0..size as i32).contains(&x) && (0..size as i32).contains(&y) {
+            face[((y as u32 * size + x as u32) * 4 + 3) as usize] as f32 / 255.0
+        } else {
+            0.0
+        }
+    };
+    let sample = |x: f32, y: f32| {
+        let left = x.floor() as i32;
+        let top = y.floor() as i32;
+        let fx = x - left as f32;
+        let fy = y - top as f32;
+        let upper = alpha(left, top) * (1.0 - fx) + alpha(left + 1, top) * fx;
+        let lower = alpha(left, top + 1) * (1.0 - fx) + alpha(left + 1, top + 1) * fx;
+        upper * (1.0 - fy) + lower * fy
+    };
+    for (index, pixel) in result.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+        let opacity = pixel[3] as f32 / 255.0;
+        if opacity == 1.0 {
+            continue;
+        }
+        let x = (index % size as usize) as f32 - depth;
+        let y = (index / size as usize) as f32 - depth * 1.25;
+        let shadow = 0.40 * sample(x, y)
+            + 0.08
+                * (sample(x - blur, y)
+                    + sample(x + blur, y)
+                    + sample(x, y - blur)
+                    + sample(x, y + blur));
+        // Composite a black shadow under the face while keeping straight alpha for ICO and tray.
+        let combined = opacity + shadow * (1.0 - opacity);
+        if combined > 0.0 {
+            for channel in &mut pixel[..3] {
+                *channel = (*channel as f32 * opacity / combined).round() as u8;
+            }
+            pixel[3] = (combined * 255.0).round() as u8;
+        }
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
     fn three_letters_remain_separate_and_background_is_transparent() {
         for size in [16, 32, 64, 256] {
-            let pixels = super::rgba(size);
+            let pixels = super::rasterize(size, 320.0);
             assert_eq!(pixels.len(), (size * size * 4) as usize);
             assert_eq!(pixels[3], 0);
             for x in [110.0, 220.0] {
@@ -97,6 +147,25 @@ mod tests {
             for index in 0..3 {
                 assert!((10..310).any(|x| super::letter(x as f64, 90.0) == Some(index)));
             }
+        }
+    }
+
+    #[test]
+    fn system_icons_keep_green_faces_and_visible_shadows_at_small_sizes() {
+        for size in [16, 24, 32, 256] {
+            let icon = super::system_rgba(size);
+            let face = super::rasterize(size, 344.0);
+            assert_eq!(icon[3], 0);
+            // A stroke can run between pixel centers at 16 px.
+            let (pixels, _) = icon.as_chunks::<4>();
+            let (original_pixels, _) = face.as_chunks::<4>();
+            assert!(pixels
+                .iter()
+                .any(|p| p[1] >= 155 && p[1] > p[2] && p[2] > p[0] && p[3] >= 200));
+            assert!(pixels
+                .iter()
+                .zip(original_pixels)
+                .any(|(p, original)| original[3] == 0 && p[3] >= 32));
         }
     }
 }

@@ -1,11 +1,15 @@
 #[path = "icon_pixels.rs"]
 mod pixels;
 use eframe::egui;
-pub use pixels::rgba;
+pub use pixels::system_rgba;
+
+fn rgba(size: u32) -> Vec<u8> {
+    pixels::rasterize(size, 320.0)
+}
 
 pub fn window() -> egui::IconData {
     egui::IconData {
-        rgba: rgba(64),
+        rgba: system_rgba(64),
         width: 64,
         height: 64,
     }
@@ -49,7 +53,9 @@ fn lockup(ui: &mut egui::Ui, height: f32, large: bool) {
     );
     let width = area.width().min(if large { 300.0 } else { 160.0 });
     let text_size = if large { 32.0 } else { 23.0 };
-    let total = width / 2.0 + 8.0 + text_size * 1.2;
+    // The texture includes transparent padding below the q descender.
+    let gap = if large { 8.0 } else { -3.0 };
+    let total = width / 2.0 + gap + text_size * 1.2;
     let top = area.center().y - total / 2.0;
     let scale = ui.ctx().pixels_per_point();
     let physical = (width * scale).round() as u32;
@@ -59,7 +65,7 @@ fn lockup(ui: &mut egui::Ui, height: f32, large: bool) {
         egui::vec2(width, width / 2.0),
     );
     // Keep the approved silhouettes crisp; depth is painted behind the original.
-    let text_pos = egui::pos2(area.center().x, rect.bottom() + 8.0);
+    let text_pos = egui::pos2(area.center().x, rect.bottom() + gap);
     let depth = if large { 3.0 } else { 2.0 };
     let shadow = |offset: egui::Vec2, alpha: u8| {
         let alpha = if ui.visuals().dark_mode {
@@ -140,14 +146,14 @@ pub fn import_branding() {
     ] {
         image::save_buffer(
             format!("assets/{name}.png"),
-            &rgba(size),
+            &system_rgba(size),
             size,
             size,
             image::ColorType::Rgba8,
         )
         .unwrap();
     }
-    std::fs::write("assets/logo.rgba", rgba(256)).unwrap();
+    std::fs::write("assets/logo.rgba", system_rgba(256)).unwrap();
     let bytes = std::fs::read("C:/Windows/Fonts/seguisb.ttf")
         .expect("Segoe UI Semibold is required for branding export");
     let face = FontRef::try_from_slice(&bytes).unwrap();

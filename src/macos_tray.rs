@@ -46,7 +46,8 @@ impl Tray {
         let exit = MenuItem::new("Выход", true, None);
         menu.append_items(&[&show, &exit])
             .map_err(|e| e.to_string())?;
-        let icon = Icon::from_rgba(crate::icon::rgba(32), 32, 32).map_err(|e| e.to_string())?;
+        let icon =
+            Icon::from_rgba(crate::icon::system_rgba(32), 32, 32).map_err(|e| e.to_string())?;
         let tray = TrayIconBuilder::new()
             .with_tooltip("qBit Remote")
             .with_icon(icon)

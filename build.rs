@@ -28,7 +28,7 @@ fn main() {
         );
     }
 
-    fs::write(out.join("app.ico"), icon(icon_pixels::rgba)).unwrap();
+    fs::write(out.join("app.ico"), icon(icon_pixels::system_rgba)).unwrap();
     let mut resources = String::from("1 ICON \"app.ico\"\n");
     for entry in torrent_icons::ICONS {
         let filename = format!("file-{}.ico", entry.resource);

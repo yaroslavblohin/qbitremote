@@ -3,5 +3,5 @@
 <g fill="none" stroke-width="26" stroke-linecap="round" stroke-linejoin="round">
 <g stroke="#0064f0"><circle cx="58" cy="90" r="35"/><path d="M93 90V151"/></g>
 <g stroke="#00b9e6" transform="translate(224 180) rotate(180)"><circle cx="58" cy="90" r="35"/><path d="M93 90V151"/></g>
-<path stroke="#00b8c2" d="M239 125V90C239 67 258 61 289 61"/>
+<path stroke="#22c55e" d="M239 125V90C239 67 258 61 289 61"/>
 </g></svg>

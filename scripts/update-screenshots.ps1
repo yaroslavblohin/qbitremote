@@ -13,7 +13,10 @@ try {
     Remove-Item Env:QBIT_SMOKE_TRAY, Env:QBIT_SMOKE_COLUMNS, Env:QBIT_SMOKE_MULTI, Env:QBIT_SMOKE_FREE_SPACE, Env:QBIT_SMOKE_ADD_HEIGHT, Env:QBIT_SMOKE_ADD_MANY -ErrorAction SilentlyContinue
     cargo build --locked --features ui-smoke
     if ($LASTEXITCODE -ne 0) { throw 'Screenshot build failed' }
-    New-Item -ItemType Directory -Path docs/screenshots -Force | Out-Null
+    $version = [regex]::Match((Get-Content -Raw Cargo.toml), '(?m)^version = "(\d+\.\d+\.\d+)"').Groups[1].Value
+    if (-not $version) { throw 'Application version missing from Cargo.toml' }
+    $gallery = "docs/screenshots/v$version"
+    New-Item -ItemType Directory -Path $gallery -Force | Out-Null
     $env:QBIT_SMOKE_ZOOM = '1'
     $env:QBIT_SMOKE_THEME = 'marine'
     foreach ($page in @('torrents', 'files', 'speed')) {
@@ -22,7 +25,7 @@ try {
         Remove-Item -LiteralPath dist/ui-smoke-state.ron -ErrorAction SilentlyContinue
         & ./target/debug/qbit-remote.exe
         if ($LASTEXITCODE -ne 0) { throw "Screenshot failed: $page" }
-        Copy-Item -LiteralPath dist/ui-smoke.png -Destination "docs/screenshots/$page.png"
+        Copy-Item -LiteralPath dist/ui-smoke.png -Destination (Join-Path $gallery "$page.png")
     }
     $env:QBIT_SMOKE_THEME = 'graphite'
     $env:QBIT_SMOKE_PAGE = 'server-tabs'
@@ -30,14 +33,14 @@ try {
     Remove-Item -LiteralPath dist/ui-smoke-state.ron -ErrorAction SilentlyContinue
     & ./target/debug/qbit-remote.exe
     if ($LASTEXITCODE -ne 0) { throw 'Screenshot failed: graphite' }
-    Copy-Item -LiteralPath dist/ui-smoke.png -Destination docs/screenshots/graphite.png
+    Copy-Item -LiteralPath dist/ui-smoke.png -Destination (Join-Path $gallery 'graphite.png')
     $env:QBIT_SMOKE_THEME = 'white'
     $env:QBIT_SMOKE_PAGE = 'files'
     Remove-Item -LiteralPath dist/ui-smoke.png -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath dist/ui-smoke-state.ron -ErrorAction SilentlyContinue
     & ./target/debug/qbit-remote.exe
     if ($LASTEXITCODE -ne 0) { throw 'Screenshot failed: white' }
-    Copy-Item -LiteralPath dist/ui-smoke.png -Destination docs/screenshots/white.png
+    Copy-Item -LiteralPath dist/ui-smoke.png -Destination (Join-Path $gallery 'white.png')
     $env:QBIT_SMOKE_THEME = 'graphite'
     $env:QBIT_SMOKE_MULTI = '1'
     $env:QBIT_SMOKE_PAGE = 'actions'
@@ -45,47 +48,47 @@ try {
     Remove-Item -LiteralPath dist/ui-smoke-state.ron -ErrorAction SilentlyContinue
     & ./target/debug/qbit-remote.exe
     if ($LASTEXITCODE -ne 0) { throw 'Screenshot failed: actions' }
-    Copy-Item -LiteralPath dist/ui-smoke.png -Destination docs/screenshots/actions.png
+    Copy-Item -LiteralPath dist/ui-smoke.png -Destination (Join-Path $gallery 'actions.png')
     $env:QBIT_SMOKE_PAGE = 'torrents'
     Remove-Item -LiteralPath dist/ui-smoke.png -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath dist/ui-smoke-state.ron -ErrorAction SilentlyContinue
     & ./target/debug/qbit-remote.exe
     if ($LASTEXITCODE -ne 0) { throw 'Screenshot failed: multiselect' }
-    Copy-Item -LiteralPath dist/ui-smoke.png -Destination docs/screenshots/multiselect.png
+    Copy-Item -LiteralPath dist/ui-smoke.png -Destination (Join-Path $gallery 'multiselect.png')
     Remove-Item Env:QBIT_SMOKE_MULTI, Env:QBIT_SMOKE_FREE_SPACE, Env:QBIT_SMOKE_ADD_HEIGHT, Env:QBIT_SMOKE_ADD_MANY -ErrorAction SilentlyContinue
     $env:QBIT_SMOKE_PAGE = 'rss-import'
     Remove-Item -LiteralPath dist/ui-smoke.png -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath dist/ui-smoke-state.ron -ErrorAction SilentlyContinue
     & ./target/debug/qbit-remote.exe
     if ($LASTEXITCODE -ne 0) { throw 'Screenshot failed: rss-import' }
-    Copy-Item -LiteralPath dist/ui-smoke.png -Destination docs/screenshots/rss-import.png
+    Copy-Item -LiteralPath dist/ui-smoke.png -Destination (Join-Path $gallery 'rss-import.png')
     $env:QBIT_SMOKE_PAGE = 'add-torrent'
     Remove-Item -LiteralPath dist/ui-smoke.png, dist/ui-smoke-state.ron -ErrorAction SilentlyContinue
     & ./target/debug/qbit-remote.exe
     if ($LASTEXITCODE -ne 0) { throw 'Screenshot failed: add-torrent' }
-    Copy-Item -LiteralPath dist/ui-smoke.png -Destination docs/screenshots/add-torrent.png
+    Copy-Item -LiteralPath dist/ui-smoke.png -Destination (Join-Path $gallery 'add-torrent.png')
     foreach ($entry in @(
-        @{ Page = 'settings'; Destination = 'docs/screenshots/settings.png' },
-        @{ Page = 'general-layout'; Destination = 'docs/screenshots/general.png' },
-        @{ Page = 'graph-disabled'; Destination = 'docs/screenshots/graph-disabled.png' },
-        @{ Page = 'console'; Destination = 'docs/screenshots/console.png' },
-        @{ Page = 'peers'; Destination = 'docs/screenshots/peers.png' },
-        @{ Page = 'trackers'; Destination = 'docs/screenshots/trackers.png'; Zoom = '0.8' },
-        @{ Page = 'about'; Destination = 'docs/screenshots/about.png' },
-        @{ Page = 'associations'; Destination = 'docs/screenshots/file-associations.png' },
-        @{ Page = 'pieces'; Destination = 'docs/screenshots/pieces.png' },
-        @{ Page = 'torrent-graph'; Destination = 'docs/screenshots/torrent-graph.png' },
-        @{ Page = 'actions-bottom'; Destination = 'docs/screenshots/actions-bottom.png' },
-        @{ Page = 'path-mappings'; Destination = 'docs/path-mappings.png' },
-        @{ Page = 'actions'; Destination = 'docs/torrent-open-menu.png' },
-        @{ Page = 'torrents'; Destination = 'docs/status-bar.png' }
+        @{ Page = 'settings'; File = 'settings.png' },
+        @{ Page = 'general-layout'; File = 'general.png' },
+        @{ Page = 'graph-disabled'; File = 'graph-disabled.png' },
+        @{ Page = 'console'; File = 'console.png' },
+        @{ Page = 'peers'; File = 'peers.png' },
+        @{ Page = 'trackers'; File = 'trackers.png'; Zoom = '0.8' },
+        @{ Page = 'about'; File = 'about.png' },
+        @{ Page = 'associations'; File = 'file-associations.png' },
+        @{ Page = 'pieces'; File = 'pieces.png' },
+        @{ Page = 'torrent-graph'; File = 'torrent-graph.png' },
+        @{ Page = 'actions-bottom'; File = 'actions-bottom.png' },
+        @{ Page = 'path-mappings'; File = 'path-mappings.png' },
+        @{ Page = 'actions'; File = 'torrent-open-menu.png' },
+        @{ Page = 'torrents'; File = 'status-bar.png' }
     )) {
         $env:QBIT_SMOKE_PAGE = $entry.Page
         $env:QBIT_SMOKE_ZOOM = if ($entry.Zoom) { $entry.Zoom } else { '1' }
         Remove-Item -LiteralPath dist/ui-smoke.png, dist/ui-smoke-state.ron -ErrorAction SilentlyContinue
         & ./target/debug/qbit-remote.exe
         if ($LASTEXITCODE -ne 0) { throw "Screenshot failed: $($entry.Page)" }
-        Copy-Item -LiteralPath dist/ui-smoke.png -Destination $entry.Destination
+        Copy-Item -LiteralPath dist/ui-smoke.png -Destination (Join-Path $gallery $entry.File)
     }
 } finally {
     $env:QBIT_SMOKE_MULTI = $previousMulti

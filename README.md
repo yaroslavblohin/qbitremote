@@ -32,15 +32,15 @@
 
 **1. Graphite Theme** — тёмная тема по умолчанию, открыты вкладки двух серверов.
 
-![Graphite Theme](docs/screenshots/graphite.png)
+![Graphite Theme](docs/screenshots/v0.3.23/graphite.png)
 
 **2. White Theme** — светлая тема.
 
-![White Theme](docs/screenshots/white.png)
+![White Theme](docs/screenshots/v0.3.23/white.png)
 
 **3. Marine Dark Theme** — тёмная морская палитра и приоритеты папок на вкладке «Файлы».
 
-![Marine Dark Theme](docs/screenshots/files.png)
+![Вкладка «Файлы» 0.3.23 с выбором приоритета у папок Linux, Docs и Images](docs/screenshots/v0.3.23/files.png)
 
 В столбце «Приоритет» можно изменить приоритет отдельного файла или всей папки. Приоритет папки распространяется на все вложенные файлы, в том числе скрытые поиском. Если приоритеты внутри различаются, в строке папки отображается «Разный». Переименование доступно по правому щелчку на строке файла или папки.
 
@@ -49,75 +49,75 @@
 
 Список торрентов и панель сведений:
 
-![Список торрентов](docs/screenshots/torrents.png)
+![Список торрентов](docs/screenshots/v0.3.23/torrents.png)
 
 Общие сведения с выровненными колонками и прокруткой у правого края:
 
-![Общие сведения](docs/screenshots/general.png)
+![Общие сведения](docs/screenshots/v0.3.23/general.png)
 
 Выбор файлов перед добавлением:
 
-![Добавление торрента](docs/screenshots/add-torrent.png)
+![Добавление торрента](docs/screenshots/v0.3.23/add-torrent.png)
 
 Скорость и глобальные ограничения:
 
-![Скорость и статистика](docs/screenshots/speed.png)
+![Скорость и статистика](docs/screenshots/v0.3.23/speed.png)
 
 График выбранного торрента: запись начата после получения части данных; синяя линия — загрузка, зелёная — отдача уже полученных частей.
 
-![График торрента](docs/screenshots/torrent-graph.png)
+![График торрента](docs/screenshots/v0.3.23/torrent-graph.png)
 
 Графики выключены по умолчанию:
 
-![Выключенный график](docs/screenshots/graph-disabled.png)
+![Выключенный график](docs/screenshots/v0.3.23/graph-disabled.png)
 
 Карта частей:
 
-![Части торрента](docs/screenshots/pieces.png)
+![Части торрента](docs/screenshots/v0.3.23/pieces.png)
 
 Пиры с флагами стран:
 
-![Пиры](docs/screenshots/peers.png)
+![Пиры](docs/screenshots/v0.3.23/peers.png)
 
 Трекеры с раскрытыми адресами IPv4 и IPv6, версиями BT и временем до анонса:
 
-![Трекеры](docs/screenshots/trackers.png)
+![Трекеры](docs/screenshots/v0.3.23/trackers.png)
 
 Контекстное меню и его нижняя часть:
 
-![Команды торрентов](docs/screenshots/actions.png)
+![Команды торрентов](docs/screenshots/v0.3.23/actions.png)
 
-![Редактирование и ограничения](docs/screenshots/actions-bottom.png)
+![Редактирование и ограничения](docs/screenshots/v0.3.23/actions-bottom.png)
 
 Множественный выбор:
 
-![Множественный выбор](docs/screenshots/multiselect.png)
+![Множественный выбор](docs/screenshots/v0.3.23/multiselect.png)
 
 Импорт правил RSS:
 
-![Импорт RSS](docs/screenshots/rss-import.png)
+![Импорт RSS](docs/screenshots/v0.3.23/rss-import.png)
 
 Настройки сервера:
 
-![Настройки сервера](docs/screenshots/settings.png)
+![Настройки сервера](docs/screenshots/v0.3.23/settings.png)
 
 Консоль приложения:
 
-![Консоль приложения](docs/screenshots/console.png)
+![Консоль приложения](docs/screenshots/v0.3.23/console.png)
 
 Сопоставления папок и команды открытия:
 
-![Сопоставления путей](docs/path-mappings.png)
+![Сопоставления путей](docs/screenshots/v0.3.23/path-mappings.png)
 
-![Открытие файлов](docs/torrent-open-menu.png)
+![Открытие файлов](docs/screenshots/v0.3.23/torrent-open-menu.png)
 
 Нижняя строка состояния:
 
-![Строка состояния](docs/status-bar.png)
+![Строка состояния](docs/screenshots/v0.3.23/status-bar.png)
 
 Окно «О программе» с зелёной буквой r в логотипе и номером версии:
 
-![О программе](docs/screenshots/about.png)
+![О программе](docs/screenshots/v0.3.23/about.png)
 
 </details>
 
@@ -260,7 +260,7 @@ cargo build --release --locked
 
 ### Скриншоты и бренд
 
-`scripts/update-screenshots.ps1` обновляет все **23 снимка** на демонстрационных данных без подключения к серверу; нужен рабочий стол Windows. Ручной запуск: `cargo run --locked --features ui-smoke`. `QBIT_SMOKE_PAGE` выбирает страницу, `QBIT_SMOKE_THEME` — `graphite`, `white` или `marine`, `QBIT_SMOKE_ZOOM` — масштаб. Результат ручного запуска сохраняется в `dist/ui-smoke.png`, состояние — в отдельном `dist/ui-smoke-state.ron`.
+`scripts/update-screenshots.ps1` сохраняет **23 снимка** на демонстрационных данных в `docs/screenshots/v<версия>/`. Для нового выпуска обновите ссылки на галерею в README. Сценарию нужен рабочий стол Windows. Ручной запуск — `cargo run --locked --features ui-smoke`. `QBIT_SMOKE_PAGE` выбирает страницу, `QBIT_SMOKE_THEME` — `graphite`, `white` или `marine`, `QBIT_SMOKE_ZOOM` — масштаб. Результат ручного запуска сохраняется в `dist/ui-smoke.png`, состояние — в отдельном `dist/ui-smoke-state.ron`.
 
 Форму и цвета монограммы qbr задаёт `src/icon_pixels.rs`. Векторный исходник хранится в `assets/brand-monogram.svg`. В боковой панели и окне «О программе» короткая тень есть у монограммы и названия. Зазор между ними пропорционален ширине монограммы. Значки рабочего стола, окна и трея получают тень при растеризации. Экспорт PNG использует установленный Segoe UI Semibold (сам файл шрифта не распространяется). Для пересборки ресурсов:
 
@@ -304,7 +304,7 @@ Remove-Item Env:QBIT_IMPORT_BRANDING
 
 Выбор значка показывает сами изображения; название появляется при наведении. По умолчанию выбран объёмный магнит. Применение обновляет также обработчик «Открыть с помощью» (Applications\qbit-remote.exe), если Windows использует его для .torrent.
 
-![Выбор значка .torrent в Windows](docs/screenshots/file-associations.png)
+![Выбор значка .torrent в Windows](docs/screenshots/v0.3.23/file-associations.png)
 
 ## Автозапуск Windows
 

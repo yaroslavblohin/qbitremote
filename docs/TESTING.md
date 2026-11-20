@@ -134,7 +134,7 @@ cargo run --locked --features ui-smoke
 
 ## Проверка значков 0.3.7 — 16 ноября 2026
 
-125 тестов прошли, 6 исключены; clippy со всеми features/targets и запретом warnings, fmt, release-сборка и `scripts/check-project.py --release` успешны. Проверены прозрачность, уникальность и размеры шести растровых значков. В тестовом окне с изолированными настройками визуально проверены все шесть кнопок; снимок: [file-associations.png](screenshots/file-associations.png). Для воспроизведения: сборка с `ui-smoke`, `QBIT_SMOKE_PAGE=associations`, тема graphite, масштаб 1; снимок делается через 8 секунд после загрузки изображений и прокрутки раздела.
+125 тестов прошли, 6 исключены; clippy со всеми features/targets и запретом warnings, fmt, release-сборка и `scripts/check-project.py --release` успешны. Проверены прозрачность, уникальность и размеры шести растровых значков. В тестовом окне с изолированными настройками визуально проверены все шесть кнопок; снимок: [file-associations.png](screenshots/v0.3.23/file-associations.png). Для воспроизведения: сборка с `ui-smoke`, `QBIT_SMOKE_PAGE=associations`, тема graphite, масштаб 1; снимок делается через 8 секунд после загрузки изображений и прокрутки раздела.
 
 На пользовательской Windows AssocQueryString подтвердил переключение ресурсов 2–7 из Release/qbit-remote.exe. ExtractIconEx извлёк большой и малый значок каждого ресурса. Исходные DefaultIcon восстановлены (магнит, ресурс 2); UserChoice не менялся. Открытый Проводник визуально не проверялся. SHA-256 бинарников target/release, dist и Release совпал; прежний dist EXE 0.3.6 архивирован с проверкой хеша.
 

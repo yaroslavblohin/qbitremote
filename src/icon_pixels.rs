@@ -81,9 +81,12 @@ pub fn rasterize(size: u32, extent: f64) -> Vec<u8> {
     out
 }
 
+// Leave less empty space around the mark while keeping room for its shadow.
+const SYSTEM_ICON_EXTENT: f64 = 324.0;
+
 /// Windows shell, window and tray artwork, padded for the cast shadow.
 pub fn system_rgba(size: u32) -> Vec<u8> {
-    let face = rasterize(size, 344.0);
+    let face = rasterize(size, SYSTEM_ICON_EXTENT);
     let mut result = face.clone();
     let depth = (size as f32 * 0.025).max(0.65);
     let blur = depth * 0.55;
@@ -108,7 +111,7 @@ pub fn system_rgba(size: u32) -> Vec<u8> {
         if opacity == 1.0 {
             continue;
         }
-        let x = (index % size as usize) as f32 - depth;
+        let x = (index % size as usize) as f32 - depth * 0.75;
         let y = (index / size as usize) as f32 - depth * 1.25;
         let shadow = 0.40 * sample(x, y)
             + 0.08
@@ -154,7 +157,7 @@ mod tests {
     fn system_icons_keep_green_faces_and_visible_shadows_at_small_sizes() {
         for size in [16, 24, 32, 256] {
             let icon = super::system_rgba(size);
-            let face = super::rasterize(size, 344.0);
+            let face = super::rasterize(size, super::SYSTEM_ICON_EXTENT);
             assert_eq!(icon[3], 0);
             // A stroke can run between pixel centers at 16 px.
             let (pixels, _) = icon.as_chunks::<4>();

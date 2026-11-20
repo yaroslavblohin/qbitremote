@@ -8,22 +8,46 @@ struct Folder {
     size: u64,
     done: f64,
     count: usize,
+    priority: Option<i64>,
 }
+
+fn path_parts(path: &str) -> impl Iterator<Item = &str> {
+    path.split('/').filter(|part| !part.is_empty())
+}
+
+fn file_index(file: &Value, position: usize) -> Option<i64> {
+    match file.get("index") {
+        // Older Web APIs use the position in the unfiltered response.
+        None => i64::try_from(position).ok(),
+        Some(index) => index.as_i64().filter(|index| *index >= 0),
+    }
+}
+
 impl Folder {
-    fn insert(&mut self, parts: &[&str], file: &Value) {
-        let size = file["size"].as_u64().unwrap_or(0);
-        self.size = self.size.saturating_add(size);
-        self.done += size as f64 * file["progress"].as_f64().unwrap_or(0.0).clamp(0.0, 1.0);
-        self.count += 1;
+    fn insert(&mut self, parts: &[&str], file: &Value, position: usize, matches: bool) {
+        let priority = file["priority"].as_i64().unwrap_or(255);
+        self.priority = Some(match self.priority {
+            Some(previous) if previous != priority => 255,
+            _ => priority,
+        });
+        if matches {
+            let size = file["size"].as_u64().unwrap_or(0);
+            self.size = self.size.saturating_add(size);
+            self.done += size as f64 * file["progress"].as_f64().unwrap_or(0.0).clamp(0.0, 1.0);
+            self.count += 1;
+        }
         if parts.len() > 1 {
-            self.folders
-                .entry(parts[0].into())
-                .or_default()
-                .insert(&parts[1..], file);
-        } else {
+            self.folders.entry(parts[0].into()).or_default().insert(
+                &parts[1..],
+                file,
+                position,
+                matches,
+            );
+        } else if matches {
             let mut row = file.clone();
             row["__path"] = file["name"].clone();
             row["name"] = json!(parts.first().copied().unwrap_or(""));
+            row["index"] = json!(file_index(file, position));
             self.files.push(row);
         }
     }
@@ -36,6 +60,9 @@ impl Folder {
         out: &mut Vec<Value>,
     ) {
         for (name, folder) in &self.folders {
+            if folder.count == 0 {
+                continue;
+            }
             let path = if path.is_empty() {
                 name.clone()
             } else {
@@ -44,7 +71,7 @@ impl Folder {
             let open = searching || !collapsed.contains(&path);
             out.push(
                 json!({"name": name, "__path": path, "__folder": true, "__depth": depth,
-                "__open": open, "__count": folder.count, "size": folder.size,
+                "__open": open, "__count": folder.count, "size": folder.size, "priority": folder.priority,
                 "progress": if folder.size > 0 { folder.done / folder.size as f64 } else { 0.0 }}),
             );
             if open {
@@ -64,17 +91,30 @@ impl Folder {
 pub fn rows(data: &Value, query: &str, collapsed: &HashSet<String>) -> Vec<Value> {
     let mut root = Folder::default();
     let query = query.trim().to_lowercase();
-    for file in data.as_array().into_iter().flatten() {
+    for (position, file) in data.as_array().into_iter().flatten().enumerate() {
         let name = file["name"].as_str().unwrap_or("");
-        if !name.to_lowercase().contains(&query) {
-            continue;
-        }
-        let parts: Vec<_> = name.split('/').filter(|s| !s.is_empty()).collect();
-        root.insert(&parts, file);
+        let matches = query.is_empty() || name.to_lowercase().contains(&query);
+        let parts: Vec<_> = path_parts(name).collect();
+        root.insert(&parts, file, position, matches);
     }
     let mut out = Vec::new();
     root.flatten("", 0, collapsed, !query.is_empty(), &mut out);
     out
+}
+
+pub fn folder_file_ids(data: &Value, folder: &str) -> Option<String> {
+    let folder_parts: Vec<_> = path_parts(folder).collect();
+    if folder_parts.is_empty() {
+        return None;
+    }
+    let mut ids = Vec::new();
+    for (position, file) in data.as_array()?.iter().enumerate() {
+        let mut parts = path_parts(file["name"].as_str().unwrap_or(""));
+        if folder_parts.iter().all(|part| parts.next() == Some(*part)) && parts.next().is_some() {
+            ids.push(file_index(file, position)?.to_string());
+        }
+    }
+    (!ids.is_empty()).then(|| ids.join("|"))
 }
 
 /// Initially show root folders and their immediate contents only.
@@ -89,6 +129,40 @@ pub fn initial_collapsed(data: &Value) -> HashSet<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn folder_priority_covers_hidden_descendants_and_excludes_similar_paths() {
+        let data = json!([
+            {"name":"Game/DLC/search.txt","index":7,"priority":1},
+            {"name":"Game/DLC/Nested/hidden.bin","index":12,"priority":6},
+            {"name":"Game/DLC-old/search.txt","index":9,"priority":0},
+            {"name":"Game/DLC/legacy.bin","priority":1}
+        ]);
+        let collapsed = HashSet::from(["Game/DLC".into()]);
+        let all = rows(&data, "", &collapsed);
+        assert!(!all.iter().any(|row| row["index"] == 12));
+        let filtered = rows(&data, "search.txt", &collapsed);
+        let folder = filtered
+            .iter()
+            .find(|row| row["__path"] == "Game/DLC")
+            .unwrap();
+        assert_eq!(folder["__count"], 1);
+        assert_eq!(folder["priority"], 255);
+        let sibling = filtered
+            .iter()
+            .find(|row| row["__path"] == "Game/DLC-old")
+            .unwrap();
+        assert_eq!(sibling["priority"], 0);
+        assert_eq!(
+            folder_file_ids(&data, "Game/DLC").as_deref(),
+            Some("7|12|3")
+        );
+        assert!(folder_file_ids(&data, "Game/DL").is_none());
+        assert!(
+            folder_file_ids(&json!([{"name":"Game/DLC/bad.bin","index":-1}]), "Game/DLC").is_none()
+        );
+    }
+
     #[test]
     fn initial_expansion_shows_only_root_contents_and_search_preserves_it() {
         let data = json!([

@@ -1149,7 +1149,14 @@ impl ClientApp {
         egui::SidePanel::left(egui::Id::new(("sidebar", self.tab_id)))
             .exact_width(218.0)
             .resizable(false)
-            .frame(egui::Frame::new().fill(palette.sidebar).inner_margin(14.0))
+            .frame(
+                egui::Frame::new()
+                    .fill(palette.sidebar)
+                    .inner_margin(egui::Margin {
+                        bottom: 14,
+                        ..egui::Margin::same(0)
+                    }),
+            )
             .show(ctx, |ui| {
                 let bounds = ui.clip_rect();
                 if bounds.is_positive() {
@@ -1164,10 +1171,13 @@ impl ClientApp {
                 }
                 egui::ScrollArea::vertical()
                     .id_salt("navigation")
-                    .show(ui, |ui| {
-                        ui.add_space(8.0);
-                        crate::icon::header(ui);
-                        ui.add_space(12.0);
+                    .show(ui, |sidebar| {
+                        crate::icon::header(sidebar);
+                        sidebar.add_space(12.0);
+                        let mut navigation = egui::Frame::new()
+                            .inner_margin(egui::Margin::symmetric(14, 0))
+                            .begin(sidebar);
+                        let ui = &mut navigation.content_ui;
                         ui.label(RichText::new("СЕРВЕР").size(10.0).color(palette.muted));
                         ui.add(
                             egui::Label::new(
@@ -1227,6 +1237,7 @@ impl ClientApp {
                                 self.remote.page = page;
                             }
                         }
+                        navigation.end(sidebar);
                     });
             });
     }

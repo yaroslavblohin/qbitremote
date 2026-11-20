@@ -1438,38 +1438,41 @@ impl Remote {
         let rows = file_tree::rows(data, &self.file_filter, &self.collapsed_folders);
         let searching = !self.file_filter.trim().is_empty();
         let (toggled, rename, open) = file_tree_table(ui, hash, &rows, searching, |ui, row| {
-            if row["__folder"].as_bool() == Some(true) {
-                return;
-            }
-            let mut priority = number(row, "priority");
+            let folder = row["__folder"].as_bool() == Some(true);
+            let mut priority = row["priority"].as_i64().unwrap_or(255);
             let old = priority;
-            file_priority_combo(ui, number(row, "index"), &mut priority);
-            if old != priority {
-                self.action(
-                    "Приоритет файла",
-                    "torrents/filePrio",
-                    vec![
-                        ("hash".into(), hash.into()),
-                        ("id".into(), number(row, "index").to_string()),
-                        ("priority".into(), priority.to_string()),
-                    ],
-                );
+            let index = row["index"].as_i64();
+            let path = row["__path"].as_str().unwrap_or("");
+            if folder {
+                crate::priority::combo(ui, ("folder-prio", hash, path), &mut priority)
+                    .on_hover_text("Приоритет для всех файлов в этой папке и вложенных папках");
+            } else if let Some(index) = index {
+                file_priority_combo(ui, index, &mut priority);
             }
-            if ui.small_button("Имя…").clicked() {
-                self.open_form(
-                    "Переименовать файл",
-                    "torrents/renameFile",
-                    vec![
-                        ("hash".into(), hash.into()),
-                        ("oldPath".into(), text(row, "__path")),
-                    ],
-                    vec![Field::new(
-                        "newPath",
-                        "Новое имя / относительный путь",
-                        text(row, "__path"),
-                    )],
-                    "Файл будет переименован на сервере.",
-                );
+            if old != priority {
+                let ids = if folder {
+                    file_tree::folder_file_ids(data, path)
+                } else {
+                    index.map(|index| index.to_string())
+                };
+                if let Some(ids) = ids {
+                    self.action(
+                        if folder {
+                            "Приоритет папки"
+                        } else {
+                            "Приоритет файла"
+                        },
+                        "torrents/filePrio",
+                        vec![
+                            ("hash".into(), hash.into()),
+                            ("id".into(), ids),
+                            ("priority".into(), priority.to_string()),
+                        ],
+                    );
+                } else {
+                    self.message = "Не удалось определить все файлы в папке".into();
+                    self.error = true;
+                }
             }
         });
         if let Some((path, parent)) = open {
@@ -1480,25 +1483,47 @@ impl Remote {
                 self.collapsed_folders.insert(path);
             }
         }
-        if let Some(path) = rename {
+        if let Some(target) = rename {
+            let (path, title, endpoint, prompt, notice) = match target {
+                RenameTarget::File(path) => (
+                    path,
+                    "Переименовать файл",
+                    "torrents/renameFile",
+                    "Новое имя / относительный путь",
+                    "Файл будет переименован на сервере.",
+                ),
+                RenameTarget::Folder(path) => (
+                    path,
+                    "Переименовать папку",
+                    "torrents/renameFolder",
+                    "Новый относительный путь",
+                    "Папка будет переименована на сервере.",
+                ),
+            };
             self.open_form(
-                "Переименовать папку",
-                "torrents/renameFolder",
+                title,
+                endpoint,
                 vec![
                     ("hash".into(), hash.into()),
                     ("oldPath".into(), path.clone()),
                 ],
-                vec![Field::new("newPath", "Новый относительный путь", path)],
-                "Папка будет переименована на сервере.",
+                vec![Field::new("newPath", prompt, path)],
+                notice,
             );
         }
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum RenameTarget {
+    File(String),
+    Folder(String),
+}
+
 fn file_context_menu(
     ui: &mut egui::Ui,
     file: &Value,
-    rename: &mut Option<String>,
+    rename: &mut Option<RenameTarget>,
     open: &mut Option<(String, bool)>,
 ) {
     let folder = file["__folder"].as_bool() == Some(true);
@@ -1521,15 +1546,23 @@ fn file_context_menu(
         *open = Some((text(file, "__path"), true));
         ui.close_menu();
     }
-    if folder
-        && action_menu_item(ui, "Переименовать папку…", crate::ui_icons::RENAME, false).clicked()
-    {
-        *rename = Some(text(file, "__path"));
+    let label = if folder {
+        "Переименовать папку…"
+    } else {
+        "Переименовать файл…"
+    };
+    if action_menu_item(ui, label, crate::ui_icons::RENAME, false).clicked() {
+        let path = text(file, "__path");
+        *rename = Some(if folder {
+            RenameTarget::Folder(path)
+        } else {
+            RenameTarget::File(path)
+        });
         ui.close_menu();
     }
 }
 
-type FileTreeResult = (Option<String>, Option<String>, Option<(String, bool)>);
+type FileTreeResult = (Option<String>, Option<RenameTarget>, Option<(String, bool)>);
 
 fn file_tree_table(
     ui: &mut egui::Ui,
@@ -1564,9 +1597,9 @@ fn file_tree_table(
                 .column(Column::initial(100.0))
                 .column(Column::initial(95.0))
                 .column(Column::initial(100.0))
-                .column(Column::initial(220.0))
+                .column(Column::initial(crate::priority::WIDTH + 14.0))
                 .header(22.0, |mut header| {
-                    for title in ["Имя", "Размер", "Прогресс", "Доступность", "Действия"]
+                    for title in ["Имя", "Размер", "Прогресс", "Доступность", "Приоритет"]
                     {
                         header.col(|ui| {
                             ui.weak(title);
@@ -2283,6 +2316,85 @@ mod tests {
         }
     }
     #[test]
+    fn folder_priority_dropdown_queues_one_update_for_the_whole_folder() {
+        use super::*;
+        let ctx = egui::Context::default();
+        let torrent = Torrent {
+            hash: "folder-test".into(),
+            ..Default::default()
+        };
+        let files = json!([
+            {"name":"DLC/match.txt","index":7,"priority":1},
+            {"name":"DLC/Nested/hidden.bin","index":12,"priority":6},
+            {"name":"DLC-old/hidden.bin","index":9,"priority":0}
+        ]);
+        let mut remote = Remote {
+            file_filter: "match.txt".into(),
+            ..Default::default()
+        };
+        let mut target = egui::Pos2::ZERO;
+        for frame in 0..6 {
+            let mut input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1200.0, 700.0),
+                )),
+                time: Some(frame as f64 * 0.3),
+                ..Default::default()
+            };
+            if [1, 2, 4, 5].contains(&frame) {
+                input.events = vec![
+                    egui::Event::PointerMoved(target),
+                    egui::Event::PointerButton {
+                        pos: target,
+                        button: egui::PointerButton::Primary,
+                        pressed: [1, 4].contains(&frame),
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ];
+            }
+            let output = ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    remote.files(ui, &torrent, &files, &[]);
+                });
+            });
+            if let Some(label) = match frame {
+                0 => Some("Разный"),
+                3 => Some("Максимальный"),
+                _ => None,
+            } {
+                target = output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::Shape::Text(text) if text.galley.text() == label => {
+                            Some(text.pos + text.galley.size() / 2.0)
+                        }
+                        _ => None,
+                    })
+                    .expect(label);
+            }
+        }
+        let commands = remote.commands();
+        let [Command::Remote {
+            path, fields, post, ..
+        }] = commands.as_slice()
+        else {
+            panic!("expected one folder priority request");
+        };
+        assert!(*post);
+        assert_eq!(path, "torrents/filePrio");
+        assert_eq!(
+            fields,
+            &[
+                ("hash".into(), "folder-test".into()),
+                ("id".into(), "7|12".into()),
+                ("priority".into(), "7".into()),
+            ]
+        );
+    }
+
+    #[test]
     fn clicking_folder_icon_collapses_and_reopens_without_opening_a_local_path() {
         use super::*;
         let ctx = egui::Context::default();
@@ -2416,7 +2528,7 @@ mod tests {
                 true,
                 "Folder  (1)",
                 "Переименовать папку…",
-                Some("Folder"),
+                Some(RenameTarget::Folder("Folder".into())),
                 None,
             ),
             (
@@ -2439,6 +2551,13 @@ mod tests {
                 "",
                 None,
                 Some(("Folder/file.txt", false)),
+            ),
+            (
+                true,
+                "file.txt",
+                "Переименовать файл…",
+                Some(RenameTarget::File("Folder/file.txt".into())),
+                None,
             ),
             (
                 true,
@@ -2523,11 +2642,7 @@ mod tests {
                         });
                 }
             }
-            assert_eq!(
-                renamed.as_deref(),
-                expected_rename,
-                "{row_label}: {command}"
-            );
+            assert_eq!(renamed, expected_rename, "{row_label}: {command}");
             assert_eq!(
                 opened.as_ref().map(|(p, parent)| (p.as_str(), *parent)),
                 expected_open,

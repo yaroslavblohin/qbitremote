@@ -46,16 +46,20 @@ fn font(ctx: &egui::Context, size: f32) -> egui::FontId {
     };
     egui::FontId::new(size, family)
 }
-fn lockup(ui: &mut egui::Ui, height: f32, large: bool) {
-    let (area, response) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), height),
-        egui::Sense::hover(),
-    );
-    let width = area.width().min(if large { 300.0 } else { 160.0 });
-    let text_size = if large { 32.0 } else { 23.0 };
+fn lockup(ui: &mut egui::Ui, min_height: f32, large: bool) {
+    let available_width = ui.available_width();
+    let width = if large {
+        available_width.min(300.0)
+    } else {
+        (available_width - 4.0).max(1.0)
+    };
+    let text_size = if large { 32.0 } else { 26.0 };
     // Compensate for the texture's bottom padding in proportion to the monogram width.
     let gap = -width * (3.0 / 160.0);
     let total = width / 2.0 + gap + text_size * 1.2;
+    let height = min_height.max(total + 4.0);
+    let (area, response) =
+        ui.allocate_exact_size(egui::vec2(available_width, height), egui::Sense::hover());
     let top = area.center().y - total / 2.0;
     let scale = ui.ctx().pixels_per_point();
     let physical = (width * scale).round() as u32;
@@ -124,7 +128,7 @@ fn lockup(ui: &mut egui::Ui, height: f32, large: bool) {
     });
 }
 pub fn header(ui: &mut egui::Ui) {
-    lockup(ui, 110.0, false);
+    lockup(ui, 0.0, false);
 }
 pub fn presentation(ui: &mut egui::Ui) {
     lockup(ui, 220.0, true);

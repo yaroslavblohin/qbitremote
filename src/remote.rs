@@ -206,7 +206,6 @@ impl Remote {
             Ok("files") => 4,
             Ok("trackers") => 1,
             Ok("peers") => 2,
-            Ok("pieces") => 5,
             Ok("torrent-graph" | "graph-disabled") => 6,
             _ => 0,
         };
@@ -269,10 +268,10 @@ impl Remote {
             ),
             (
                 "pieceStates/fixture-1",
-                json!((0..600)
-                    .map(|i| if i < 380 {
+                json!((0..1500)
+                    .map(|i| if i < 960 {
                         2
-                    } else if i < 430 {
+                    } else if i < 1010 {
                         1
                     } else {
                         0
@@ -323,7 +322,11 @@ impl Remote {
         self.tab
     }
     pub fn restore_details_tab(&mut self, tab: usize) {
-        self.tab = if tab <= 6 { tab } else { 0 };
+        // Saved ID 5 used to open Pieces, now shown on General.
+        self.tab = match tab {
+            0..=4 | 6 => tab,
+            _ => 0,
+        };
     }
     pub fn clear(&mut self) {
         self.add_sources.clear();
@@ -564,7 +567,6 @@ impl Remote {
             for (id, name) in [
                 (0, "Общее"),
                 (4, "Файлы"),
-                (5, "Части"),
                 (2, "Пиры"),
                 (1, "Трекеры"),
                 (6, "График"),
@@ -574,6 +576,10 @@ impl Remote {
             }
         });
         ui.separator();
+        if self.tab == 0 {
+            self.general(ui, torrent);
+            return;
+        }
         if self.tab == 6 {
             self.graphs.ui(ui, Some(hash));
             return;
@@ -583,8 +589,7 @@ impl Remote {
             2 => "sync/torrentPeers",
             3 => "torrents/webseeds",
             4 => "torrents/files",
-            5 => "torrents/pieceStates",
-            _ => "torrents/properties",
+            _ => return,
         };
         let key = format!("{}/{}", endpoint.split('/').next_back().unwrap(), hash);
         let mut args = vec![("hash".into(), hash.clone())];
@@ -596,82 +601,67 @@ impl Remote {
             return;
         };
         match self.tab {
-            0 => {
-                ui.horizontal_wrapped(|ui| {
-                    self.limit_button(ui, Some(hash), true, number(&data, "dl_limit"));
-                    self.limit_button(ui, Some(hash), false, number(&data, "up_limit"));
-                    if ui.button("Скопировать magnet").clicked() {
-                        ui.ctx().copy_text(
-                            torrent
-                                .extra
-                                .get("magnet_uri")
-                                .and_then(Value::as_str)
-                                .map(str::to_owned)
-                                .unwrap_or_else(|| format!("magnet:?xt=urn:btih:{hash}")),
-                        );
-                    }
-                });
-                let (data, extra) = properties::split(&data, &torrent.extra);
-                property_scroll_area(ui).show(ui, |ui| {
-                    let label_width = property_label_width(ui, &[&data, &extra]);
-                    property_table(ui, "properties", &data, label_width);
-                    if extra.as_object().is_some_and(|map| !map.is_empty()) {
-                        egui::CollapsingHeader::new("Дополнительные сведения")
-                            .id_salt("general-extra")
-                            .open(
-                                if cfg!(feature = "ui-smoke")
-                                    && std::env::var("QBIT_SMOKE_PAGE").as_deref()
-                                        == Ok("general-layout")
-                                {
-                                    Some(true)
-                                } else {
-                                    None
-                                },
-                            )
-                            .show_unindented(ui, |ui| {
-                                property_table(ui, "extra", &extra, label_width)
-                            });
-                    }
-                });
-            }
             1 => self.trackers(ui, hash, &data),
             2 => self.peers(ui, hash, &data),
             3 => self.webseeds(ui, hash, &data),
             4 => self.files(ui, torrent, &data, mappings),
-            5 => {
-                ui.label("Серый — отсутствует, синий — загружается, зелёный — готов");
-                let pieces = data.as_array().cloned().unwrap_or_default();
-                let (rect, _) = ui.allocate_exact_size(
-                    egui::vec2(ui.available_width(), 60.0),
-                    egui::Sense::hover(),
-                );
-                let bins = pieces.len().min(rect.width() as usize).max(1);
-                for i in 0..bins {
-                    let index = i * pieces.len() / bins;
-                    let state = pieces.get(index).and_then(Value::as_i64).unwrap_or(0);
-                    let color = match state {
-                        2 => crate::theme::palette(ui.ctx()).green,
-                        1 => crate::theme::palette(ui.ctx()).blue,
-                        _ => crate::theme::palette(ui.ctx()).button,
-                    };
-                    ui.painter().rect_filled(
-                        egui::Rect::from_min_max(
-                            rect.min + egui::vec2(i as f32 * rect.width() / bins as f32, 0.0),
-                            rect.min
-                                + egui::vec2((i + 1) as f32 * rect.width() / bins as f32, 60.0),
-                        ),
-                        0.0,
-                        color,
-                    );
-                }
-                ui.label(format!(
-                    "Частей: {} · готово: {}",
-                    pieces.len(),
-                    pieces.iter().filter(|p| p.as_i64() == Some(2)).count()
-                ));
-            }
             _ => {}
         }
+    }
+
+    fn general(&mut self, ui: &mut egui::Ui, torrent: &Torrent) {
+        let hash = &torrent.hash;
+        let pieces_key = format!("pieceStates/{hash}");
+        let properties_key = format!("properties/{hash}");
+        let args = vec![("hash".into(), hash.clone())];
+        let pieces = self.get(&pieces_key, "torrents/pieceStates", args.clone());
+        let data = self.get(&properties_key, "torrents/properties", args);
+        property_scroll_area(ui).show(ui, |ui| {
+            ui.strong("Части торрента");
+            match pieces.as_ref().and_then(Value::as_array) {
+                Some(parts) if !parts.is_empty() => show_piece_map(ui, parts),
+                _ if pieces.is_some() => {
+                    ui.weak("Нет данных о частях");
+                }
+                _ => self.loading(ui, &pieces_key),
+            }
+            ui.separator();
+            let Some(data) = data else {
+                self.loading(ui, &properties_key);
+                return;
+            };
+            ui.horizontal_wrapped(|ui| {
+                self.limit_button(ui, Some(hash), true, number(&data, "dl_limit"));
+                self.limit_button(ui, Some(hash), false, number(&data, "up_limit"));
+                if ui.button("Скопировать magnet").clicked() {
+                    ui.ctx().copy_text(
+                        torrent
+                            .extra
+                            .get("magnet_uri")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned)
+                            .unwrap_or_else(|| format!("magnet:?xt=urn:btih:{hash}")),
+                    );
+                }
+            });
+            let (data, extra) = properties::split(&data, &torrent.extra);
+            let label_width = property_label_width(ui, &[&data, &extra]);
+            property_table(ui, "properties", &data, label_width);
+            if extra.as_object().is_some_and(|map| !map.is_empty()) {
+                egui::CollapsingHeader::new("Дополнительные сведения")
+                    .id_salt("general-extra")
+                    .open(
+                        if cfg!(feature = "ui-smoke")
+                            && std::env::var("QBIT_SMOKE_PAGE").as_deref() == Ok("general-layout")
+                        {
+                            Some(true)
+                        } else {
+                            None
+                        },
+                    )
+                    .show_unindented(ui, |ui| property_table(ui, "extra", &extra, label_width));
+            }
+        });
     }
     fn limit_button(
         &mut self,
@@ -1797,6 +1787,36 @@ fn data_table(
             });
     });
 }
+fn show_piece_map(ui: &mut egui::Ui, pieces: &[Value]) {
+    ui.label("Серый — отсутствует, синий — загружается, зелёный — готов");
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 60.0), egui::Sense::hover());
+    let bins = pieces.len().min(rect.width() as usize).max(1);
+    let width = rect.width() / bins as f32;
+    let palette = crate::theme::palette(ui.ctx());
+    for i in 0..bins {
+        let index = i * pieces.len() / bins;
+        let color = match pieces[index].as_i64() {
+            Some(2) => palette.green,
+            Some(1) => palette.blue,
+            _ => palette.button,
+        };
+        ui.painter().rect_filled(
+            egui::Rect::from_min_max(
+                egui::pos2(rect.left() + i as f32 * width, rect.top()),
+                egui::pos2(rect.left() + (i + 1) as f32 * width, rect.bottom()),
+            ),
+            0.0,
+            color,
+        );
+    }
+    ui.label(format!(
+        "Частей: {} · готово: {}",
+        pieces.len(),
+        pieces.iter().filter(|p| p.as_i64() == Some(2)).count()
+    ));
+}
+
 fn property_scroll_area(ui: &mut egui::Ui) -> egui::ScrollArea {
     ui.spacing_mut().scroll.floating = false;
     let area = egui::ScrollArea::vertical()
@@ -2315,6 +2335,58 @@ mod tests {
             );
         }
     }
+    #[test]
+    fn old_pieces_tab_opens_general_and_loads_both_sections_independently() {
+        let mut remote = Remote::default();
+        remote.restore_details_tab(5);
+        assert_eq!(remote.details_tab(), 0);
+        let ctx = egui::Context::default();
+        let torrent = Torrent {
+            hash: "selected".into(),
+            ..Default::default()
+        };
+        let draw_details = |remote: &mut Remote| {
+            ctx.run(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| remote.details(ui, &torrent, &[]));
+            })
+        };
+        let _ = draw_details(&mut remote);
+        let requests = remote.commands();
+        assert_eq!(requests.len(), 2);
+        for request in requests {
+            let Command::Remote {
+                path,
+                token,
+                fields,
+                post,
+            } = request
+            else {
+                panic!("expected a read request");
+            };
+            assert!(!post);
+            assert_eq!(fields, vec![("hash".into(), "selected".into())]);
+            remote.reply(
+                token,
+                match path.as_str() {
+                    "torrents/pieceStates" => Ok(json!([0, 1, 2, 2])),
+                    "torrents/properties" => Err("Свойства недоступны".into()),
+                    _ => panic!("unexpected endpoint: {path}"),
+                },
+            );
+        }
+        let output = draw_details(&mut remote);
+        let label_y = |label| {
+            output.shapes.iter().find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.text() == label => Some(text.pos.y),
+                _ => None,
+            })
+        };
+        assert!(label_y("Части").is_none());
+        assert!(
+            label_y("Частей: 4 · готово: 2").unwrap() < label_y("Свойства недоступны").unwrap()
+        );
+    }
+
     #[test]
     fn folder_priority_dropdown_queues_one_update_for_the_whole_folder() {
         use super::*;

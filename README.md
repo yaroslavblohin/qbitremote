@@ -7,11 +7,11 @@
   <img src="docs/readme-logo-light.png" alt="Логотип qBit Remote с объёмной тенью" width="300">
 </picture>
 
-[Инструкция Windows](Release/README.md) · [История изменений](CHANGELOG.md) · [Проверки](docs/TESTING.md) · [Аудит целостности](docs/INTEGRITY.md) · [macOS](docs/MACOS.md)
+[Готовые сборки и инструкция](Release/README.md) · [История изменений](CHANGELOG.md) · [Проверки](docs/TESTING.md) · [Аудит целостности](docs/INTEGRITY.md) · [macOS](docs/MACOS.md)
 
 ## Быстрый запуск
 
-1. На Windows запустите [qbit-remote.exe](Release/qbit-remote.exe). На Mac скачайте ZIP для своего процессора, распакуйте его и перенесите `qBit Remote.app` в «Программы». [Apple Silicon (arm64)](https://github.com/yaroslavblohin/qbitremote/releases/download/v0.3.27/qbit-remote-0.3.27-arm64.zip) · [Intel (amd64)](https://github.com/yaroslavblohin/qbitremote/releases/download/v0.3.27/qbit-remote-0.3.27-amd64.zip) · [Установка на macOS](docs/MACOS.md)
+1. Скачайте сборку из папки `Release`. В Windows запустите EXE. На Mac распакуйте ZIP для своего процессора и перенесите `qBit Remote.app` в «Программы». [Windows x64](Release/qbit-remote.exe) · [Apple Silicon (arm64)](Release/qbit-remote-0.3.27-arm64.zip) · [Intel (amd64)](Release/qbit-remote-0.3.27-amd64.zip) · [Установка на macOS](docs/MACOS.md)
 2. Включите Web UI на сервере qBittorrent и разрешите доступ с компьютера клиента.
 3. Создайте профиль подключения: адрес, имя пользователя и пароль. Поддерживаются адреса вида `https://seedbox.example.org` и пути reverse proxy, например `https://example.org/qbit/`.
 4. Нажмите «Подключиться». Список торрентов обновляется автоматически; ручное обновление доступно через «Файл → Обновить список».
@@ -196,14 +196,14 @@
 
 ## Открытие файлов через сопоставления
 
-Подключите серверный ресурс в Windows и задайте правила в профиле подключения либо в «Серверы → Настройки qBittorrent → Сопоставление папок сервера с этим компьютером».
+Подключите серверный ресурс в Проводнике или Finder и задайте правила в профиле подключения либо в «Серверы → Настройки qBittorrent → Сопоставление папок сервера с этим компьютером».
 
-| На сервере | На клиенте Windows |
-| --- | --- |
-| `/downloads/complete` | `Y:\torrents\complete` |
-| `/downloads` | `\\NAS\Downloads` |
+| На сервере | На Windows | На macOS |
+| --- | --- | --- |
+| `/downloads/complete` | `Y:\torrents\complete` | `/Volumes/Downloads/complete` |
+| `/downloads` | `\\NAS\Downloads` | `/Volumes/Downloads` |
 
-Папка должна уже открываться в Проводнике. Клиент не скачивает файлы через Web UI API. Правила сохраняются автоматически отдельно для каждого профиля; «Обзор…» выбирает папку на компьютере.
+Папка должна уже открываться в Проводнике или Finder. Клиент не скачивает файлы через Web UI API. Правила сохраняются отдельно для каждого профиля. Кнопка «Обзор…» выбирает папку на компьютере.
 
 При первом открытии файлов торрента раскрыты только корневые папки: видны их файлы и свёрнутые вложенные папки. При смене торрента используется то же начальное раскрытие; обновление списка не сбрасывает ручной выбор. Поиск временно показывает подходящие ветки.
 
@@ -257,7 +257,7 @@ cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo build --release --locked
 ```
 
-Бинарник: `target/release/qbit-remote.exe`. Комплект поставки: `Release/qbit-remote.exe` и самостоятельная инструкция `Release/README.md`; `dist/qbit-remote.exe` содержит ту же сборку. Установщик, цифровая подпись и автообновление пока отсутствуют.
+Сборка Windows создаёт `target/release/qbit-remote.exe`. При выпуске один и тот же EXE помещается в `dist` и `Release`. Папка `Release` также содержит два ZIP для macOS и самостоятельную инструкцию для обеих систем. [Комплект поставки](Release/README.md)
 
 Перед заменой EXE штатно завершите приложение. Правила выпуска описаны в [AGENTS.md](AGENTS.md): версия повышается только при изменениях кода и синхронизируется в Cargo.toml/Cargo.lock/README/CHANGELOG; работа с документацией и скриншотами не повышает версию. При выпуске предыдущий EXE архивируется в `dist_backup` с проверкой SHA-256, бинарники dist и Release сверяются. Архивы не удаляются автоматически.
 
@@ -265,7 +265,7 @@ cargo build --release --locked
 
 В `.github/workflows/windows.yml` выполняются проверка ресурсов, форматирование, тесты всех feature, clippy и release-сборка. `.github/workflows/macos.yml` готовит пакеты на runners `macos-15` и `macos-15-intel`. Оба workflow поддерживают push, pull request и ручной запуск.
 
-`python scripts/check-project.py` проверяет наличие встроенных ресурсов и исходных изображений, CRC PNG, версии, локальные ссылки и LF в shell-скрипте. `--release` дополнительно проверяет SHA-256 dist/Release, состав поставки и PE-экспорт отказа от RTSS с нулевым DWORD. После восстановления из бекапа запускайте проверку до сборки.
+`python scripts/check-project.py` проверяет наличие встроенных ресурсов и исходных изображений, CRC PNG, версии, локальные ссылки и LF в shell-скрипте. `--release` дополнительно проверяет состав поставки, SHA-256 Windows EXE, экспорт отказа от RTSS и архитектуру и версию каждого macOS ZIP. При наличии исходных ZIP в `dist-macos` проверяется и совпадение их SHA-256. После восстановления из бекапа запускайте проверку до сборки.
 
 Результаты последнего полного прогона, исторических нативных проверок и ограничения собраны в [docs/TESTING.md](docs/TESTING.md). [Аудит восстановления 0.2.77](docs/INTEGRITY.md) — исторический отчёт, а не описание текущего состояния репозитория.
 
@@ -285,7 +285,7 @@ Remove-Item Env:QBIT_IMPORT_BRANDING
 
 ## macOS
 
-Версия 0.3.27 доступна для Apple Silicon (arm64) и Intel (amd64) с macOS 11 или новее. Скрипт `scripts/build-macos.sh` с флагом `--arm64` или `--amd64` создаёт ZIP в `dist-macos`. [Выпуск 0.3.27](https://github.com/yaroslavblohin/qbitremote/releases/tag/v0.3.27) · [Руководство для macOS](docs/MACOS.md) · [Сборки GitHub Actions](https://github.com/yaroslavblohin/qbitremote/actions/workflows/macos.yml)
+Версия 0.3.27 доступна для Apple Silicon (arm64) и Intel (amd64) с macOS 11 или новее. Скрипт `scripts/build-macos.sh` с флагом `--arm64` или `--amd64` создаёт ZIP в `dist-macos`. Готовые архивы лежат в `Release`. [Выпуск 0.3.27 на GitHub](https://github.com/yaroslavblohin/qbitremote/releases/tag/v0.3.27) · [Руководство для macOS](docs/MACOS.md) · [Сборки GitHub Actions](https://github.com/yaroslavblohin/qbitremote/actions/workflows/macos.yml)
 
 ## Структура проекта
 

@@ -1,9 +1,11 @@
 """Read-only project integrity preflight. Python standard library only."""
 from pathlib import Path
 import hashlib
+import plistlib
 import re
 import struct
 import sys
+import zipfile
 import zlib
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -65,6 +67,20 @@ def png(path):
     except struct.error:
         errors.append(f"Invalid PNG chunks: {path}")
 
+def macos_archive(path, version, cpu_type):
+    contents = 'qBit Remote.app/Contents/'
+    try:
+        with zipfile.ZipFile(path) as archive:
+            corrupt_file = archive.testzip()
+            require(corrupt_file is None, f'ZIP CRC mismatch: {path}: {corrupt_file}')
+            info = plistlib.loads(archive.read(contents + 'Info.plist'))
+            require(info.get('CFBundleShortVersionString') == version, f'Bundle version mismatch: {path}')
+            with archive.open(contents + 'MacOS/qbit-remote') as binary:
+                magic, arch = struct.unpack('<II', binary.read(8))
+            require(magic == 0xfeedfacf and arch == cpu_type, f'Unexpected Mach-O architecture: {path}')
+    except (OSError, AttributeError, KeyError, ValueError, struct.error, zipfile.BadZipFile, plistlib.InvalidFileException) as error:
+        errors.append(f'Cannot verify macOS archive: {path}: {error}')
+
 version = re.search(r'^version = "([^"]+)"', (ROOT/'Cargo.toml').read_text(), re.M)[1]
 lock = (ROOT/'Cargo.lock').read_text()
 require(f'name = "qbit-remote"\nversion = "{version}"' in lock, 'Cargo.lock version mismatch')
@@ -94,7 +110,20 @@ if '--release' in sys.argv:
             rtss_opt_out(path)
         require(len({hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}) == 1, 'Release SHA256 mismatch')
     require(len(list((ROOT/'dist').glob('*.exe'))) == 1, 'dist must contain one EXE')
-    require({p.name for p in (ROOT/'Release').iterdir()} == {'qbit-remote.exe','README.md'}, 'Unexpected Release contents')
+    mac_archives = {
+        f'qbit-remote-{version}-arm64.zip': 0x0100000c,
+        f'qbit-remote-{version}-amd64.zip': 0x01000007,
+    }
+    release_dir = ROOT/'Release'
+    expected_files = {'qbit-remote.exe', 'README.md', *mac_archives}
+    require({p.name for p in release_dir.iterdir()} == expected_files, 'Unexpected Release contents')
+    for name, cpu_type in mac_archives.items():
+        archive = release_dir/name
+        macos_archive(archive, version, cpu_type)
+        source = ROOT/'dist-macos'/name
+        if source.is_file() and archive.is_file():
+            require(hashlib.sha256(archive.read_bytes()).digest() == hashlib.sha256(source.read_bytes()).digest(),
+                    f'macOS release SHA256 mismatch: {name}')
 if errors:
     print('\n'.join(errors))
     sys.exit(1)

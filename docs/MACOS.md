@@ -4,8 +4,10 @@
 
 | Mac | Архитектура | Архив |
 | --- | --- | --- |
-| Apple Silicon | arm64 | [qbit-remote-0.3.27-arm64.zip](https://github.com/yaroslavblohin/qbitremote/releases/download/v0.3.27/qbit-remote-0.3.27-arm64.zip) |
-| Intel | amd64 (x86_64) | [qbit-remote-0.3.27-amd64.zip](https://github.com/yaroslavblohin/qbitremote/releases/download/v0.3.27/qbit-remote-0.3.27-amd64.zip) |
+| Apple Silicon | arm64 | [qbit-remote-0.3.27-arm64.zip](../Release/qbit-remote-0.3.27-arm64.zip) |
+| Intel | amd64 (x86_64) | [qbit-remote-0.3.27-amd64.zip](../Release/qbit-remote-0.3.27-amd64.zip) |
+
+Те же архивы можно скачать со страницы выпуска. [GitHub Releases](https://github.com/yaroslavblohin/qbitremote/releases/tag/v0.3.27)
 
 ## Установка и подключение
 

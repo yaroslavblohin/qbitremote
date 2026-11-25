@@ -2,10 +2,16 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 [[ "$(uname -s)" == Darwin ]] || { echo "Run this script on macOS" >&2; exit 1; }
-case "${1:-}" in
-  "") architectures=("$(uname -m)"); package_arch="${architectures[0]}" ;;
+usage() {
+  echo "Usage: $0 [--amd64 | --arm64 | --universal]" >&2
+  exit 1
+}
+[[ $# -le 1 ]] || usage
+case "${1:-$(uname -m)}" in
+  --arm64|arm64) architectures=(arm64); package_arch=arm64 ;;
+  --amd64|x86_64) architectures=(x86_64); package_arch=amd64 ;;
   --universal) architectures=(arm64 x86_64); package_arch=universal ;;
-  *) echo "Usage: $0 [--universal]" >&2; exit 1 ;;
+  *) usage ;;
 esac
 
 export MACOSX_DEPLOYMENT_TARGET=11.0
@@ -24,7 +30,11 @@ done
 version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
 mkdir -p dist-macos
 work=$(mktemp -d dist-macos/.build.XXXXXXXX)
-output="dist-macos/qBit Remote.app"
+output_dir=dist-macos
+if [[ "$package_arch" != universal ]]; then
+  output_dir="$output_dir/$package_arch"
+fi
+output="$output_dir/qBit Remote.app"
 cleanup() {
   if [[ -d "$work/previous.app" && ! -e "$output" ]]; then
     mv "$work/previous.app" "$output" || return
@@ -38,6 +48,7 @@ if [[ "$package_arch" == universal ]]; then
   lipo -create "${binaries[@]}" -output "$app/Contents/MacOS/qbit-remote"
 else
   cp "${binaries[0]}" "$app/Contents/MacOS/qbit-remote"
+  [[ "$(lipo -archs "$app/Contents/MacOS/qbit-remote")" == "${architectures[0]}" ]]
 fi
 for arch in "${architectures[@]}"; do
   lipo "$app/Contents/MacOS/qbit-remote" -verify_arch "$arch"
@@ -95,9 +106,10 @@ codesign --force --sign - "$app"
 codesign --verify --deep --strict "$app"
 archive="qbit-remote-$version-$package_arch.zip"
 ditto -c -k --sequesterRsrc --keepParent "$app" "$work/$archive"
+mkdir -p "$output_dir"
 if [[ -d "$output" ]]; then
   mv "$output" "$work/previous.app"
 fi
-mv "$app" dist-macos/
+mv "$app" "$output_dir/"
 mv "$work/$archive" dist-macos/
 shasum -a 256 "dist-macos/$archive"

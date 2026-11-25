@@ -1,6 +1,11 @@
-# qBit Remote 0.3.26 для macOS
+# qBit Remote 0.3.27 для macOS
 
-Требуется macOS 11 Big Sur или новее. Универсальный архив `qbit-remote-0.3.26-universal.zip` подходит для Apple Silicon и Intel.
+Требуется macOS 11 Big Sur или новее. Выберите архив для своего Mac.
+
+| Mac | Архитектура | Архив |
+| --- | --- | --- |
+| Apple Silicon | arm64 | [qbit-remote-0.3.27-arm64.zip](https://github.com/yaroslavblohin/qbitremote/releases/download/v0.3.27/qbit-remote-0.3.27-arm64.zip) |
+| Intel | amd64 (x86_64) | [qbit-remote-0.3.27-amd64.zip](https://github.com/yaroslavblohin/qbitremote/releases/download/v0.3.27/qbit-remote-0.3.27-amd64.zip) |
 
 ## Установка и подключение
 
@@ -23,6 +28,8 @@
 
 Стрелки перед «Загрузка» и «Отдача» обозначают направления передачи. Стрелка после заголовка обозначает сортировку. Повторный щелчок по тому же заголовку меняет её направление. [Снимок списка торрентов](screenshots/v0.3.26/macos-torrents.jpg)
 
+В окне «Подключение и настройки» масштаб применяется после отпускания ползунка. Щёлкните по ползунку, чтобы подсветить его и менять масштаб клавишами ← и → с шагом 1%. Если форма выше окна приложения, прокрутите её до ползунка.
+
 ## Сборка из исходников
 
 Установите Xcode Command Line Tools и Rust stable. Из корня проекта выполните:
@@ -30,7 +37,8 @@
 ```sh
 cargo test --locked
 rustup target add aarch64-apple-darwin x86_64-apple-darwin
-bash scripts/build-macos.sh --universal
+bash scripts/build-macos.sh --arm64
+bash scripts/build-macos.sh --amd64
 ```
 
-Готовые приложение и ZIP появятся в `dist-macos`. Для сборки только под архитектуру текущего Mac запустите скрипт без флага. Готовый архив также доступен в артефакте `qbit-remote-macos-universal` соответствующего запуска. [Сборки macOS на GitHub](https://github.com/yaroslavblohin/qbitremote/actions/workflows/macos.yml)
+ZIP появятся в `dist-macos`, а пакеты приложения — в подпапках `arm64` и `amd64`. Без флага скрипт использует архитектуру среды сборки. В GitHub Actions каждому ZIP соответствует артефакт `qbit-remote-macos-arm64` или `qbit-remote-macos-amd64`. [Сборки macOS на GitHub](https://github.com/yaroslavblohin/qbitremote/actions/workflows/macos.yml)

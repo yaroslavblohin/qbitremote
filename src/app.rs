@@ -41,6 +41,7 @@ pub struct ClientApp {
     notice: String,
     is_error: bool,
     settings_open: bool,
+    zoom_preview: Option<f32>,
     add_open: bool,
     links: String,
     save_path: String,
@@ -331,6 +332,7 @@ impl ClientApp {
             notice: String::new(),
             is_error: false,
             settings_open: false,
+            zoom_preview: None,
             add_open: false,
             links: String::new(),
             save_path: String::new(),
@@ -682,12 +684,17 @@ impl ClientApp {
                 });
             });
         let mut open = self.settings_open;
+        let screen = ctx.screen_rect();
+        let width = (screen.width() - 32.0).clamp(96.0, 560.0);
+        // Leave room for the title and frame. The scroll area shrinks to fit shorter forms.
+        let height = (screen.height() - 64.0).max(32.0);
         egui::Window::new("Подключение и настройки")
             .id(egui::Id::new(("profile-settings", self.tab_id)))
             .open(&mut open)
             .collapsible(false)
-            .resizable(false)
-            .default_width(560.0)
+            .auto_sized()
+            .min_size([width, height])
+            .max_size([width, height])
             .vscroll(true)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
@@ -810,18 +817,15 @@ impl ClientApp {
                 #[cfg(windows)]
                 crate::autostart::ui(ui);
                 crate::file_associations::ui(ui);
-                ui.label("Масштаб интерфейса · поверх системного DPI");
-                if ui
-                    .add(egui::Slider::new(&mut self.settings.zoom, 0.8..=1.5).suffix("×"))
-                    .changed()
-                {
-                    ctx.set_zoom_factor(self.settings.zoom);
-                }
+                zoom_control(ui, &mut self.settings.zoom, &mut self.zoom_preview);
                 ui.label(
                     RichText::new("Выход — через меню «Файл» или значок в трее.").color(palette.muted),
                 );
             });
         self.settings_open = open && self.settings_open;
+        if !self.settings_open {
+            self.zoom_preview = None;
+        }
         let mut add_open = self.add_open;
         egui::Window::new("Добавить торрент")
             .id(egui::Id::new(("add-torrent-links", self.tab_id)))
@@ -1714,6 +1718,49 @@ fn torrent_panel(
         .show(ctx, contents)
 }
 
+fn zoom_control(ui: &mut egui::Ui, applied: &mut f32, preview: &mut Option<f32>) {
+    let label = ui.label("Масштаб интерфейса · поверх системного DPI");
+    let mut value = preview.take().unwrap_or(*applied);
+    let (slider, number) = ui
+        .horizontal(|ui| {
+            let slider = ui.add(
+                egui::Slider::new(&mut value, 0.8..=1.5)
+                    .clamping(egui::SliderClamping::Edits)
+                    .step_by(0.01)
+                    .fixed_decimals(2)
+                    .show_value(false),
+            );
+            let number = ui.add(
+                egui::DragValue::new(&mut value)
+                    .range(0.8..=1.5)
+                    .speed(0.01)
+                    .fixed_decimals(2)
+                    .suffix("×"),
+            );
+            (slider, number)
+        })
+        .inner;
+    let slider = slider.labelled_by(label.id);
+    let number = number.labelled_by(label.id);
+    if slider.is_pointer_button_down_on() {
+        slider.request_focus();
+    }
+    if slider.has_focus() {
+        ui.painter().rect_stroke(
+            slider.rect.expand(2.0),
+            3.0,
+            egui::Stroke::new(1.0_f32, crate::theme::palette(ui.ctx()).accent),
+            egui::StrokeKind::Inside,
+        );
+    }
+    if slider.is_pointer_button_down_on() || number.is_pointer_button_down_on() {
+        *preview = Some(value);
+    } else if value != *applied {
+        *applied = value;
+        ui.ctx().set_zoom_factor(value);
+    }
+}
+
 fn column_header(
     ui: &mut egui::Ui,
     column: &crate::columns::TorrentColumn,
@@ -2079,6 +2126,140 @@ fn torrent_progress(ui: &mut egui::Ui, torrent: &Torrent) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settings_dialog_fits_the_form_and_scrolls_on_a_short_screen() {
+        for height in [620.0, 325.0] {
+            let ctx = egui::Context::default();
+            let (tx, _) = std::sync::mpsc::channel();
+            let (_, rx) = std::sync::mpsc::channel();
+            let mut app = ClientApp::session(Settings::default(), String::new(), tx, rx, 0, false);
+            app.settings_open = true;
+            let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(860.0, height));
+            let mut render = |events| {
+                ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(screen),
+                        events,
+                        ..Default::default()
+                    },
+                    |ctx| app.dialogs(ctx),
+                )
+            };
+            let _ = render(vec![]);
+            let output = render(vec![]);
+            let window = ctx
+                .memory(|memory| memory.area_rect(egui::Id::new(("profile-settings", 0_u64))))
+                .unwrap();
+            assert!(screen.contains_rect(window), "{screen:?} {window:?}");
+            let footer_visible = |output: &egui::FullOutput| {
+                output.shapes.iter().any(|clipped| match &clipped.shape {
+                    egui::Shape::Text(text) if text.galley.text().starts_with("Выход —") => {
+                        clipped
+                            .clip_rect
+                            .contains_rect(text.galley.rect.translate(text.pos.to_vec2()))
+                    }
+                    _ => false,
+                })
+            };
+            if height > 500.0 {
+                assert!(footer_visible(&output));
+            } else {
+                assert!(!footer_visible(&output));
+                let _ = render(vec![
+                    egui::Event::PointerMoved(window.center()),
+                    egui::Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Point,
+                        delta: egui::vec2(0.0, -1000.0),
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ]);
+                assert!((0..12).any(|_| footer_visible(&render(vec![]))));
+            }
+        }
+    }
+
+    #[test]
+    fn zoom_drag_previews_until_release_and_focused_arrows_apply_one_percent() {
+        let ctx = egui::Context::default();
+        let mut applied = 1.0;
+        let mut preview = None;
+        let render = |applied: &mut f32, preview: &mut Option<f32>, events| {
+            ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(500.0, 400.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default()
+                        .show(ctx, |ui| zoom_control(ui, applied, preview));
+                },
+            )
+        };
+        let initial = render(&mut applied, &mut preview, vec![]);
+        let handle = initial
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Circle(circle) => Some(circle.center),
+                _ => None,
+            })
+            .unwrap();
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let _ = render(
+            &mut applied,
+            &mut preview,
+            vec![egui::Event::PointerMoved(handle), button(handle, true)],
+        );
+        assert!(ctx.memory(|memory| memory.focused()).is_some());
+        let released_at = handle + egui::vec2(30.0, 0.0);
+        let _ = render(
+            &mut applied,
+            &mut preview,
+            vec![egui::Event::PointerMoved(released_at)],
+        );
+        let pending = preview.unwrap();
+        assert!(pending > 1.0 && pending < 1.49);
+        assert_eq!(applied, 1.0);
+        assert_eq!(ctx.zoom_factor(), 1.0);
+        let _ = render(&mut applied, &mut preview, vec![button(released_at, false)]);
+        assert_eq!(applied, pending);
+        assert!(preview.is_none());
+        let focused = render(&mut applied, &mut preview, vec![]);
+        assert_eq!(ctx.zoom_factor(), pending);
+        let accent = crate::theme::palette(&ctx).accent;
+        assert!(focused.shapes.iter().any(|clipped| match &clipped.shape {
+            egui::Shape::Rect(rect) => rect.stroke.color == accent && rect.stroke.width == 1.0,
+            _ => false,
+        }));
+        for (key, expected) in [
+            (egui::Key::ArrowRight, pending + 0.01),
+            (egui::Key::ArrowLeft, pending),
+        ] {
+            let _ = render(
+                &mut applied,
+                &mut preview,
+                vec![egui::Event::Key {
+                    key,
+                    physical_key: Some(key),
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+            );
+            assert!((applied - expected).abs() < 1e-5, "{applied} != {expected}");
+        }
+    }
+
     #[test]
     fn heading_count_follows_filter_and_case_insensitive_search() {
         let torrents = vec![

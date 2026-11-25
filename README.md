@@ -1,6 +1,6 @@
 # qBit Remote
 
-Клиент на Rust для управления **удалённым qBittorrent** через Web UI API. Текущая версия — **0.3.26**. Приложение доступно для Windows и macOS.
+Клиент на Rust для управления **удалённым qBittorrent** через Web UI API. Текущая версия — **0.3.27**. Приложение доступно для Windows и macOS.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/readme-logo-dark.png">
@@ -11,7 +11,7 @@
 
 ## Быстрый запуск
 
-1. На Windows запустите [qbit-remote.exe](Release/qbit-remote.exe). На Mac распакуйте универсальный ZIP, перенесите `qBit Remote.app` в «Программы» и откройте его. [Установка на macOS](docs/MACOS.md).
+1. На Windows запустите [qbit-remote.exe](Release/qbit-remote.exe). На Mac скачайте ZIP для своего процессора, распакуйте его и перенесите `qBit Remote.app` в «Программы». [Apple Silicon (arm64)](https://github.com/yaroslavblohin/qbitremote/releases/download/v0.3.27/qbit-remote-0.3.27-arm64.zip) · [Intel (amd64)](https://github.com/yaroslavblohin/qbitremote/releases/download/v0.3.27/qbit-remote-0.3.27-amd64.zip) · [Установка на macOS](docs/MACOS.md)
 2. Включите Web UI на сервере qBittorrent и разрешите доступ с компьютера клиента.
 3. Создайте профиль подключения: адрес, имя пользователя и пароль. Поддерживаются адреса вида `https://seedbox.example.org` и пути reverse proxy, например `https://example.org/qbit/`.
 4. Нажмите «Подключиться». Список торрентов обновляется автоматически; ручное обновление доступно через «Файл → Обновить список».
@@ -237,6 +237,8 @@
 
 «Вид → Тема оформления»: **Graphite Theme**, **White Theme**, **Marine Dark Theme**. Тема сохраняется. Дополнительный масштаб 80–150% задаётся в настройках приложения и также сохраняется; системный DPI учитывается автоматически.
 
+Окно «Подключение и настройки» подстраивается по высоте под форму. Если места мало, содержимое можно прокрутить. Масштаб применяется после отпускания ползунка. Щёлкните по нему, чтобы увидеть рамку фокуса и менять масштаб клавишами ← и → с шагом 1%.
+
 Логотип — округлая монограмма **qbr**: qBit Remote. Буквы разделены, у `r` широкое плечо; палитра сине-бирюзовая. В боковой панели и About используется монограмма с полным названием. Надпись адаптируется к светлой и тёмной теме. Иконки окна, трея и приложения содержат только qbr на прозрачном фоне, без квадратной подложки. Значки файлов .torrent настраиваются отдельно.
 
 Монограмма отрисовывается из геометрии под физический размер и DPI, текстуры кэшируются. В Windows EXE сохранён [признак отказа от автоматического оверлея RTSS](https://github.com/beeradmoore/RTSSHooksCompatibility-sample); принудительный ForceHooking может переопределить отказ.
@@ -283,7 +285,7 @@ Remove-Item Env:QBIT_IMPORT_BRANDING
 
 ## macOS
 
-Универсальная сборка 0.3.26 поддерживает Apple Silicon и Intel с macOS 11 или новее. Скрипт `scripts/build-macos.sh --universal` создаёт `qBit Remote.app` и ZIP в `dist-macos`. [Руководство для macOS](docs/MACOS.md) · [Сборки GitHub Actions](https://github.com/yaroslavblohin/qbitremote/actions/workflows/macos.yml)
+Версия 0.3.27 доступна для Apple Silicon (arm64) и Intel (amd64) с macOS 11 или новее. Скрипт `scripts/build-macos.sh` с флагом `--arm64` или `--amd64` создаёт ZIP в `dist-macos`. [Выпуск 0.3.27](https://github.com/yaroslavblohin/qbitremote/releases/tag/v0.3.27) · [Руководство для macOS](docs/MACOS.md) · [Сборки GitHub Actions](https://github.com/yaroslavblohin/qbitremote/actions/workflows/macos.yml)
 
 ## Структура проекта
 

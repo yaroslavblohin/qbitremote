@@ -1,14 +1,14 @@
-# qBit Remote 0.3.27
+# qBit Remote для Windows и macOS
 
 Клиент управляет удалённым qBittorrent через Web UI API. В этой папке лежат готовые сборки для Windows и macOS.
 
 ## Скачивание и запуск
 
-| Система | Процессор | Файл |
-| --- | --- | --- |
-| Windows | x64 | [qbit-remote.exe](qbit-remote.exe) |
-| macOS 11 и новее | Apple Silicon (ARM64) | [qbit-remote-0.3.27-arm64.zip](qbit-remote-0.3.27-arm64.zip) |
-| macOS 11 и новее | Intel (AMD64 / x86_64) | [qbit-remote-0.3.27-amd64.zip](qbit-remote-0.3.27-amd64.zip) |
+| Система | Процессор | Версия | Файл |
+| --- | --- | --- | --- |
+| Windows | x64 | 0.3.28 | [qbit-remote.exe](qbit-remote.exe) |
+| macOS 11 и новее | Apple Silicon (ARM64) | 0.3.27 | [qbit-remote-0.3.27-arm64.zip](qbit-remote-0.3.27-arm64.zip) |
+| macOS 11 и новее | Intel (AMD64 / x86_64) | 0.3.27 | [qbit-remote-0.3.27-amd64.zip](qbit-remote-0.3.27-amd64.zip) |
 
 На Windows запустите EXE напрямую. На Mac распакуйте ZIP, перенесите `qBit Remote.app` в «Программы» и откройте его. Тип процессора указан в меню Apple → «Об этом Mac».
 

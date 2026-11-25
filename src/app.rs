@@ -37,6 +37,7 @@ pub struct ClientApp {
     search: String,
     connected: bool,
     connecting: bool,
+    connection_error: Option<String>,
     version: String,
     notice: String,
     is_error: bool,
@@ -122,7 +123,7 @@ impl ClientApp {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(1.0);
-        self.connected = true;
+        self.connected = std::env::var("QBIT_SMOKE_PAGE").as_deref() != Ok("connection");
         self.server_free_space = Some(
             std::env::var("QBIT_SMOKE_FREE_SPACE")
                 .ok()
@@ -183,6 +184,12 @@ impl ClientApp {
         self.selection.hashes.insert("fixture-1".into());
         if std::env::var_os("QBIT_SMOKE_MULTI").is_some() {
             self.selection.hashes.insert("fixture-2".into());
+        }
+        if !self.connected {
+            self.torrents.clear();
+            self.selected = None;
+            self.selection.clear();
+            self.server_free_space = None;
         }
         #[cfg(windows)]
         assert!(self.tray.is_some(), "Windows tray creation failed");
@@ -328,6 +335,7 @@ impl ClientApp {
             search: String::new(),
             connected: false,
             connecting: false,
+            connection_error: None,
             version: String::new(),
             notice: String::new(),
             is_error: false,
@@ -443,6 +451,10 @@ impl ClientApp {
         if self.tx.send(command).is_err() {
             self.notice = "Сетевой поток завершился. Перезапустите приложение.".into();
             self.is_error = true;
+            if self.connecting {
+                self.connecting = false;
+                self.connection_error = Some(self.notice.clone());
+            }
         }
     }
     fn connect(&mut self) {
@@ -457,6 +469,7 @@ impl ClientApp {
         self.remote.clear();
         self.delete = None;
         self.connecting = true;
+        self.connection_error = None;
         self.connected = false;
         self.torrents.clear();
         self.remember_details_for_reconnect();
@@ -474,6 +487,45 @@ impl ClientApp {
             self.connection_epoch,
         ));
     }
+
+    fn connection_prompt(&mut self, ui: &mut egui::Ui) {
+        let palette = crate::theme::palette(ui.ctx());
+        ui.vertical_centered(|ui| {
+            ui.label(RichText::new("Подключите сервер").size(22.0));
+            ui.add_space(12.0);
+            ui.label(
+                RichText::new("Подключите сервер qBittorrent, чтобы управлять торрентами.")
+                    .color(palette.muted),
+            );
+            ui.add_space(16.0);
+            if ui
+                .add_enabled_ui(!self.connecting, |ui| {
+                    connection_action_button(ui, "Проверить подключение", crate::ui_icons::RETRY)
+                })
+                .inner
+                .clicked()
+            {
+                self.begin_connection();
+            }
+            if connection_action_button(
+                ui,
+                "Настроить подключение",
+                crate::ui_icons::CONNECTION_SETTINGS,
+            )
+            .clicked()
+            {
+                self.settings_open = true;
+            }
+            if self.connecting {
+                ui.spinner();
+                ui.weak("Проверяем подключение…");
+            } else if let Some(error) = &self.connection_error {
+                ui.add_space(8.0);
+                ui.colored_label(palette.red, error);
+            }
+        });
+    }
+
     fn disconnect(&mut self) {
         self.server_free_space = None;
         self.add_flow.reset_session();
@@ -481,6 +533,7 @@ impl ClientApp {
         self.send(Command::Disconnect(self.connection_epoch));
         self.connected = false;
         self.connecting = false;
+        self.connection_error = None;
         self.remote.clear();
         self.torrents.clear();
         self.remember_details_for_reconnect();
@@ -548,6 +601,7 @@ impl ClientApp {
                     self.version = v;
                     self.connected = true;
                     self.connecting = false;
+                    self.connection_error = None;
                     self.settings_open = false;
                     self.notice.clear();
                     self.is_error = false;
@@ -559,7 +613,7 @@ impl ClientApp {
                     }
                 }
                 Event::Remote { token, result } => self.remote.reply(token, result),
-                Event::Disconnected => {
+                Event::Disconnected(error) => {
                     self.server_free_space = None;
                     self.add_flow.reset_session();
                     self.remote.clear();
@@ -569,6 +623,11 @@ impl ClientApp {
                     self.torrents.clear();
                     self.remember_details_for_reconnect();
                     self.selection.clear();
+                    if let Some(message) = &error {
+                        self.notice = message.clone();
+                        self.is_error = true;
+                    }
+                    self.connection_error = error;
                 }
                 Event::Torrents(torrents) => {
                     self.remote.sample_torrents(&torrents);
@@ -1381,18 +1440,7 @@ impl ClientApp {
             ui.separator();
             if !self.connected {
                 ui.add_space(90.0);
-                ui.vertical_centered(|ui| {
-                    ui.label(RichText::new("Подключите сервер").size(22.0));
-                    ui.add_space(12.0);
-                    ui.label(
-                        RichText::new("Подключите сервер qBittorrent, чтобы управлять торрентами.")
-                            .color(palette.muted),
-                    );
-                    ui.add_space(16.0);
-                    if ui.button("Настроить подключение").clicked() {
-                        self.settings_open = true;
-                    }
-                });
+                self.connection_prompt(ui);
                 return;
             }
             let query = self.search.to_lowercase();
@@ -1971,6 +2019,35 @@ fn pause_bars(center: egui::Pos2, pixels_per_point: f32) -> [egui::Rect; 2] {
     })
 }
 
+fn connection_action_button(ui: &mut egui::Ui, label: &str, icon: usize) -> egui::Response {
+    let color = ui.visuals().text_color();
+    let galley = ui.painter().layout_no_wrap(
+        label.into(),
+        egui::TextStyle::Button.resolve(ui.style()),
+        color,
+    );
+    let response = ui.add_sized(
+        egui::vec2(galley.size().x + 38.0, galley.size().y + 8.0),
+        egui::Button::new(""),
+    );
+    let rect = response.rect;
+    draw_icon(
+        ui.painter(),
+        rect.left_center() + egui::vec2(15.0, 0.0),
+        icon,
+        color,
+    );
+    ui.painter().galley(
+        egui::pos2(rect.left() + 29.0, rect.center().y - galley.size().y / 2.0),
+        galley,
+        color,
+    );
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label)
+    });
+    response
+}
+
 fn torrent_action_button(
     ui: &mut egui::Ui,
     label: &str,
@@ -2126,6 +2203,88 @@ fn torrent_progress(ui: &mut egui::Ui, torrent: &Torrent) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn connection_prompt_retries_current_profile_and_keeps_failure_visible() {
+        let ctx = egui::Context::default();
+        let (tx, commands) = std::sync::mpsc::channel();
+        let (events, rx) = std::sync::mpsc::channel();
+        let settings = Settings {
+            address: "http://127.0.0.1:8888".into(),
+            remember_password: false,
+            ..Default::default()
+        };
+        let address = settings.address.clone();
+        let mut app = ClientApp::session(settings, "test-password".into(), tx, rx, 0, false);
+        let draw = |app: &mut ClientApp, events| {
+            ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(880.0, 480.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| app.connection_prompt(ui));
+                },
+            )
+        };
+        let position = |output: &egui::FullOutput, label: &str| {
+            output.shapes.iter().find_map(|entry| match &entry.shape {
+                egui::Shape::Text(text) if text.galley.text() == label => {
+                    Some(text.pos + text.galley.size() / 2.0)
+                }
+                _ => None,
+            })
+        };
+        let output = draw(&mut app, vec![]);
+        let target = position(&output, "Проверить подключение").unwrap();
+        assert!(position(&output, "Настроить подключение").is_some());
+        let click_retry = |app: &mut ClientApp| {
+            for pressed in [true, false] {
+                let _ = draw(
+                    app,
+                    vec![
+                        egui::Event::PointerMoved(target),
+                        egui::Event::PointerButton {
+                            pos: target,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                );
+            }
+        };
+        click_retry(&mut app);
+        let Command::Connect(profile, password, epoch) = commands.try_recv().unwrap() else {
+            panic!("expected a connection attempt");
+        };
+        assert_eq!(profile.address, address);
+        assert_eq!(password, "test-password");
+        assert!(app.connecting);
+        click_retry(&mut app);
+        assert!(commands.try_recv().is_err());
+        events
+            .send((epoch, Event::Disconnected(Some("Сервер недоступен".into()))))
+            .unwrap();
+        app.receive();
+        app.receive();
+        assert!(!app.connecting);
+        assert!(position(&draw(&mut app, vec![]), "Сервер недоступен").is_some());
+        click_retry(&mut app);
+        assert!(app.connection_error.is_none());
+        let Command::Connect(_, _, next_epoch) = commands.try_recv().unwrap() else {
+            panic!("expected a second connection attempt");
+        };
+        events
+            .send((next_epoch, Event::Connected("5.2.3".into())))
+            .unwrap();
+        app.receive();
+        assert!(app.connected && !app.connecting);
+    }
 
     #[test]
     fn settings_dialog_fits_the_form_and_scrolls_on_a_short_screen() {

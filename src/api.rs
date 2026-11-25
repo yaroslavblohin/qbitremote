@@ -57,7 +57,7 @@ pub enum Event {
         result: Result<String, String>,
     },
     Connected(String),
-    Disconnected,
+    Disconnected(Option<String>),
     Torrents(Vec<Torrent>),
     Error(String),
     Done(String),
@@ -543,15 +543,14 @@ pub fn worker(ctx: eframe::egui::Context) -> (Sender<Command>, Receiver<(u64, Ev
                             next_poll = Instant::now();
                         }
                         Err(e) => {
-                            emit(Event::Disconnected);
-                            emit(Event::Error(e));
+                            emit(Event::Disconnected(Some(e)));
                         }
                     }
                 }
                 Ok(Command::Disconnect(session)) => {
                     epoch.set(session);
                     api = None;
-                    emit(Event::Disconnected);
+                    emit(Event::Disconnected(None));
                 }
                 Ok(Command::Refresh) => next_poll = Instant::now(),
                 Ok(Command::PrepareTorrent { id, source }) => {
@@ -650,11 +649,10 @@ pub fn worker(ctx: eframe::egui::Context) -> (Sender<Command>, Receiver<(u64, Ev
                             emit(Event::ServerSpace(free));
                         }
                         Err(e) => {
-                            emit(Event::Error(format!(
+                            emit(Event::Disconnected(Some(format!(
                                 "Обновление не удалось: {e}. Подключитесь повторно."
-                            )));
+                            ))));
                             api = None;
-                            emit(Event::Disconnected);
                         }
                     }
                 }

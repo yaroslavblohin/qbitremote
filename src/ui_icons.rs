@@ -22,6 +22,8 @@ pub const SHARE_LIMIT: usize = 30;
 pub const EXPORT: usize = 31;
 pub const ERROR: usize = 32;
 pub const QUEUE_DOWN: usize = 33;
+pub const RETRY: usize = 34;
+pub const CONNECTION_SETTINGS: usize = 35;
 
 pub fn color(kind: usize, p: crate::theme::Palette) -> Color32 {
     match kind {
@@ -253,6 +255,49 @@ pub fn draw(p: &egui::Painter, center: Pos2, kind: usize, _fallback: Color32) {
             }
         }
         9 | AUTO => a.gear(gray),
+        RETRY => {
+            for start in [0.45_f32, std::f32::consts::PI + 0.45] {
+                let arc = (0..=12)
+                    .map(|i| {
+                        let angle = start + 2.1 * i as f32 / 12.0;
+                        a.at(5.1 * angle.cos(), 5.1 * angle.sin())
+                    })
+                    .collect();
+                p.add(egui::Shape::line(arc, Stroke::new(1.65_f32, palette.blue)));
+                let end = start + 2.1;
+                let tip = a.at(5.1 * end.cos(), 5.1 * end.sin());
+                let tangent = egui::vec2(-end.sin(), end.cos());
+                let normal = egui::vec2(end.cos(), end.sin());
+                p.add(egui::Shape::convex_polygon(
+                    vec![
+                        tip + tangent * 2.9,
+                        tip - tangent + normal * 2.25,
+                        tip - tangent - normal * 2.25,
+                    ],
+                    palette.blue,
+                    Stroke::NONE,
+                ));
+            }
+        }
+        CONNECTION_SETTINGS => {
+            Artist {
+                p,
+                center: a.at(-2.0, -1.0),
+            }
+            .gear(palette.blue);
+            let metal = Color32::from_rgb(216, 225, 237);
+            a.line((-0.3, 6.5), (4.6, 1.6), metal, 2.5);
+            p.add(egui::Shape::line(
+                vec![
+                    a.at(3.4, -2.7),
+                    a.at(2.4, -0.2),
+                    a.at(4.4, 1.8),
+                    a.at(6.8, 0.8),
+                    a.at(7.8, -1.7),
+                ],
+                Stroke::new(1.55_f32, metal),
+            ));
+        }
         10 | ADD_TAG | REMOVE_TAG => {
             a.tag();
             if kind == ADD_TAG {

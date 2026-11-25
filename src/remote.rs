@@ -199,7 +199,7 @@ impl Remote {
     pub fn dialog_open(&self) -> bool {
         self.form.is_some() || self.rss_import.is_some()
     }
-    #[cfg(feature = "ui-smoke")]
+    #[cfg(all(windows, feature = "ui-smoke"))]
     pub fn smoke_fixture(&mut self) {
         let now = chrono::Utc::now().timestamp();
         self.tab = match std::env::var("QBIT_SMOKE_PAGE").as_deref() {
@@ -651,7 +651,7 @@ impl Remote {
                 egui::CollapsingHeader::new("Дополнительные сведения")
                     .id_salt("general-extra")
                     .open(
-                        if cfg!(feature = "ui-smoke")
+                        if cfg!(all(windows, feature = "ui-smoke"))
                             && std::env::var("QBIT_SMOKE_PAGE").as_deref() == Ok("general-layout")
                         {
                             Some(true)
@@ -1004,7 +1004,7 @@ impl Remote {
             .iter()
             .any(|tracker| tracker.get("endpoints").is_some());
         let scope = ui.id().with(("tracker-expanded", hash));
-        let default_open = cfg!(feature = "ui-smoke")
+        let default_open = cfg!(all(windows, feature = "ui-smoke"))
             && std::env::var("QBIT_SMOKE_PAGE").as_deref() == Ok("trackers");
         let rows = tracker_rows::visible_rows(trackers, |url| {
             ui.data(|data| {
@@ -1825,7 +1825,7 @@ fn property_scroll_area(ui: &mut egui::Ui) -> egui::ScrollArea {
         .max_height((ui.clip_rect().bottom() - ui.next_widget_position().y).max(40.0))
         .auto_shrink([false, false])
         .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible);
-    #[cfg(feature = "ui-smoke")]
+    #[cfg(all(windows, feature = "ui-smoke"))]
     if std::env::var("QBIT_SMOKE_PAGE").as_deref() == Ok("general-layout") {
         return area.vertical_scroll_offset(220.0);
     }

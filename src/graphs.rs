@@ -1,4 +1,4 @@
-#[cfg(feature = "ui-smoke")]
+#[cfg(all(windows, feature = "ui-smoke"))]
 pub(crate) mod demo;
 use crate::model::{bytes, Torrent};
 use eframe::egui;
@@ -127,7 +127,7 @@ impl Graphs {
             channel.push(seconds, down, up);
         }
     }
-    #[cfg(feature = "ui-smoke")]
+    #[cfg(all(windows, feature = "ui-smoke"))]
     pub fn demo(&mut self, hash: Option<&str>) {
         self.set_enabled_at(hash, true, 0.0);
         for frame in demo::frames() {

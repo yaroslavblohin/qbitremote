@@ -9,6 +9,8 @@ pub struct TabbedApp {
 
 impl TabbedApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        #[cfg(target_os = "macos")]
+        crate::macos_app::set_window(cc);
         let mut app = Self {
             current: ClientApp::new(cc),
             background: Vec::new(),
@@ -21,7 +23,8 @@ impl TabbedApp {
 
     fn restore_background(&mut self, ctx: &egui::Context) {
         let tabs = self.current.settings.startup_server_tabs();
-        let auto_connect = self.current.settings.auto_connect && !cfg!(feature = "ui-smoke");
+        let auto_connect =
+            self.current.settings.auto_connect && !cfg!(all(windows, feature = "ui-smoke"));
         for (position, index) in tabs.iter().copied().enumerate() {
             if index == self.current.settings.selected_server {
                 self.current.tab_id = position as u64;
@@ -171,7 +174,7 @@ impl TabbedApp {
             self.background.push(old);
         } else {
             self.current
-                .open_files(old.pending_files.drain(..).collect());
+                .queue_additions(old.pending_additions.drain(..));
         }
         if parked.is_none() && !self.current.is_error && !self.current.connecting {
             self.current.connect();
@@ -381,6 +384,16 @@ impl eframe::App for TabbedApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        #[cfg(target_os = "macos")]
+        for source in crate::macos_app::take_open_requests() {
+            match source {
+                Ok(source) => self.current.queue_additions([source]),
+                Err(error) => {
+                    self.current.notice = error;
+                    self.current.is_error = true;
+                }
+            }
+        }
         for tab in &mut self.background {
             tab.receive();
         }

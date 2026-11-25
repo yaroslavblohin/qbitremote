@@ -14,6 +14,24 @@ pub fn window() -> egui::IconData {
         height: 64,
     }
 }
+
+#[cfg(target_os = "macos")]
+pub fn menu_bar_rgba() -> (Vec<u8>, u32, u32) {
+    const WIDTH: u32 = 64;
+    const HEIGHT: u32 = 40;
+    let mut pixels = rgba(WIDTH);
+    for pixel in pixels.as_chunks_mut::<4>().0 {
+        pixel[..3].fill(0);
+    }
+    let row_bytes = (WIDTH * 4) as usize;
+    let top = ((WIDTH - HEIGHT) / 2) as usize;
+    (
+        pixels[top * row_bytes..(top + HEIGHT as usize) * row_bytes].to_vec(),
+        WIDTH,
+        HEIGHT,
+    )
+}
+
 fn monogram(ctx: &egui::Context, physical_width: u32) -> egui::TextureHandle {
     let width = physical_width.max(1);
     let id = egui::Id::new(("qbr-monogram", width));
@@ -134,12 +152,12 @@ pub fn presentation(ui: &mut egui::Ui) {
     lockup(ui, 220.0, true);
 }
 
-#[cfg(feature = "ui-smoke")]
+#[cfg(all(windows, feature = "ui-smoke"))]
 pub fn export_branding() {
     import_branding();
 }
 
-#[cfg(feature = "ui-smoke")]
+#[cfg(all(windows, feature = "ui-smoke"))]
 pub fn import_branding() {
     use ab_glyph::{Font, FontRef, PxScale, ScaleFont};
     for (name, size) in [
@@ -216,6 +234,22 @@ pub fn import_branding() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn menu_bar_template_keeps_only_the_monogram_opacity() {
+        let (icon, width, height) = menu_bar_rgba();
+        let pixels = icon.as_chunks::<4>().0;
+        assert!(width > height);
+        assert_eq!(pixels.len(), (width * height) as usize);
+        assert!(pixels.iter().all(|pixel| pixel[..3] == [0, 0, 0]));
+        assert!(pixels.iter().any(|pixel| pixel[3] == 255));
+        assert!(pixels.iter().any(|pixel| (1..255).contains(&pixel[3])));
+        assert!(pixels[..width as usize].iter().all(|pixel| pixel[3] == 0));
+        assert!(pixels[pixels.len() - width as usize..]
+            .iter()
+            .all(|pixel| pixel[3] == 0));
+    }
     #[test]
     fn monogram_texture_is_cached_and_has_no_square_background() {
         let ctx = egui::Context::default();

@@ -16,14 +16,8 @@ impl WindowControl {
     pub fn quitting(&self) -> bool {
         self.quitting.load(Ordering::Acquire)
     }
-    pub fn take_visibility(&self) -> Option<bool> {
-        None
-    }
     pub fn restore(&self) {
-        self.ctx.send_viewport_cmd(ViewportCommand::Visible(true));
-        self.ctx
-            .send_viewport_cmd(ViewportCommand::Minimized(false));
-        self.ctx.send_viewport_cmd(ViewportCommand::Focus);
+        crate::macos_app::show_window(&self.ctx);
     }
     pub fn exit(&self) {
         self.quitting.store(true, Ordering::Release);
@@ -46,11 +40,12 @@ impl Tray {
         let exit = MenuItem::new("Выход", true, None);
         menu.append_items(&[&show, &exit])
             .map_err(|e| e.to_string())?;
-        let icon =
-            Icon::from_rgba(crate::icon::system_rgba(32), 32, 32).map_err(|e| e.to_string())?;
+        let (pixels, width, height) = crate::icon::menu_bar_rgba();
+        let icon = Icon::from_rgba(pixels, width, height).map_err(|e| e.to_string())?;
         let tray = TrayIconBuilder::new()
             .with_tooltip("qBit Remote")
             .with_icon(icon)
+            .with_icon_as_template(true)
             .with_menu(Box::new(menu))
             .build()
             .map_err(|e| e.to_string())?;

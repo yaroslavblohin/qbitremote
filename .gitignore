@@ -3,5 +3,6 @@
 /dist_backup/
 /.reference/
 *.log
+.DS_Store
 
 /dist-macos/

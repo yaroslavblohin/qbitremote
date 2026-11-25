@@ -8,7 +8,7 @@ use std::{
 };
 mod tree;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Source {
     File(PathBuf),
     Link { url: String, downloader: String },
@@ -137,7 +137,7 @@ pub struct AddFlow {
     serial: u64,
 }
 impl AddFlow {
-    #[cfg(feature = "ui-smoke")]
+    #[cfg(all(windows, feature = "ui-smoke"))]
     pub fn smoke_fixture(&mut self) {
         self.push(Source::File("Example.torrent".into()), "/downloads".into());
         let _ = self.tick(false);
@@ -374,7 +374,7 @@ impl AddFlow {
     }
 }
 fn initial_height() -> f32 {
-    #[cfg(feature = "ui-smoke")]
+    #[cfg(all(windows, feature = "ui-smoke"))]
     if let Some(height) = std::env::var("QBIT_SMOKE_ADD_HEIGHT")
         .ok()
         .and_then(|v| v.parse::<f32>().ok())

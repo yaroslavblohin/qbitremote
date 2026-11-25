@@ -1,4 +1,4 @@
-//! Windows shell activation, shared by startup and an already running instance.
+//! File validation shared by startup and native shell activation.
 use std::{ffi::OsString, path::PathBuf};
 
 pub fn files(args: impl IntoIterator<Item = OsString>) -> Result<Vec<PathBuf>, String> {

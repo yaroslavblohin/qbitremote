@@ -10,10 +10,14 @@ pub struct PathMapping {
 pub fn settings_ui(ui: &mut eframe::egui::Ui, mappings: &mut Vec<PathMapping>) {
     use eframe::egui;
     egui::CollapsingHeader::new("Сопоставление папок сервера с этим компьютером")
-        .default_open(cfg!(feature = "ui-smoke") && std::env::var("QBIT_SMOKE_PAGE").as_deref() == Ok("path-mappings"))
+        .default_open(cfg!(all(windows, feature = "ui-smoke")) && std::env::var("QBIT_SMOKE_PAGE").as_deref() == Ok("path-mappings"))
         .show(ui, |ui| {
         ui.label("Для открытия файлов и папок из вкладки «Файлы». Сетевой ресурс должен быть подключён к этому компьютеру.");
-        ui.weak("Пример: /downloads → Z:\\Downloads или \\\\NAS\\Downloads. Правила относятся только к выбранному профилю и сохраняются автоматически.");
+        ui.weak(if cfg!(target_os = "macos") {
+            "Пример: /downloads → /Volumes/Downloads. Правила относятся только к выбранному профилю и сохраняются автоматически."
+        } else {
+            "Пример: /downloads → Z:\\Downloads или \\\\NAS\\Downloads. Правила относятся только к выбранному профилю и сохраняются автоматически."
+        });
         let mut remove = None;
         for (index, mapping) in mappings.iter_mut().enumerate() {
             ui.push_id(index, |ui| {

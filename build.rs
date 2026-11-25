@@ -13,8 +13,18 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=RC");
     println!("cargo:rerun-if-env-changed=WindowsSdkDir");
-    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
-        return;
+    match env::var("CARGO_CFG_TARGET_OS").as_deref() {
+        Ok("macos") => {
+            println!("cargo:rerun-if-changed=src/macos_app.m");
+            cc::Build::new()
+                .file("src/macos_app.m")
+                .flag("-fobjc-arc")
+                .compile("qbit_macos");
+            println!("cargo:rustc-link-lib=framework=AppKit");
+            return;
+        }
+        Ok("windows") => {}
+        _ => return,
     }
     let out = PathBuf::from(env::var_os("OUT_DIR").unwrap());
     if env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {

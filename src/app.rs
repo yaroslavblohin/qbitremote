@@ -1,4 +1,5 @@
 use crate::{
+    add_torrent::Source,
     api::{self, Command, Event},
     model::{ServerProfile, ServerView, Settings, Torrent},
 };
@@ -16,7 +17,7 @@ pub struct ClientApp {
     console: crate::console::Console,
     server_free_space: Option<u64>,
     add_flow: crate::add_torrent::AddFlow,
-    pending_files: std::collections::VecDeque<std::path::PathBuf>,
+    pending_additions: std::collections::VecDeque<Source>,
     #[cfg(windows)]
     activation: Option<crate::activation::Listener>,
     about_open: bool,
@@ -195,6 +196,7 @@ impl ClientApp {
             s.spacing.interact_size.y = 18.0;
         });
         // Use the installed Windows font for Cyrillic and crisp scalable text.
+        #[cfg(windows)]
         if let Ok(font) = std::fs::read("C:/Windows/Fonts/segoeui.ttf") {
             let mut fonts = egui::FontDefinitions::default();
             fonts
@@ -255,7 +257,7 @@ impl ClientApp {
         let auto_connect = !tabs.is_empty()
             && settings.auto_connect
             && password_error.is_none()
-            && !cfg!(feature = "ui-smoke");
+            && !cfg!(all(windows, feature = "ui-smoke"));
         let (sort, descending) = crate::columns::restored_sort(&settings);
         let mut app = Self::session(
             settings,
@@ -305,7 +307,7 @@ impl ClientApp {
             console: Default::default(),
             server_free_space: None,
             add_flow: Default::default(),
-            pending_files: Default::default(),
+            pending_additions: Default::default(),
             #[cfg(windows)]
             activation: None,
             about_open: false,
@@ -348,12 +350,16 @@ impl ClientApp {
         }
     }
     pub fn open_files(&mut self, files: Vec<std::path::PathBuf>) {
-        if files.is_empty() {
+        self.queue_additions(files.into_iter().map(Source::File));
+    }
+    fn queue_additions(&mut self, additions: impl IntoIterator<Item = Source>) {
+        let mut additions = additions.into_iter().peekable();
+        if additions.peek().is_none() {
             return;
         }
-        for file in files {
-            if !self.pending_files.contains(&file) {
-                self.pending_files.push_back(file);
+        for source in additions {
+            if !self.pending_additions.contains(&source) {
+                self.pending_additions.push_back(source);
             }
         }
         self.remote.page = crate::remote::Page::Torrents;
@@ -365,15 +371,15 @@ impl ClientApp {
             }
         }
     }
-    fn receive_activation(&mut self, ctx: &egui::Context) {
+    fn receive_activation(&mut self, _ctx: &egui::Context) {
         #[cfg(windows)]
         while let Some(args) = self.activation.as_ref().and_then(|a| a.rx.try_recv().ok()) {
             if let Some(tray) = &self.tray {
                 tray.control.restore();
             }
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
-            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            _ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            _ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            _ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
             match crate::activation::files(args) {
                 Ok(files) => self.open_files(files),
                 Err(error) => {
@@ -383,9 +389,8 @@ impl ClientApp {
             }
         }
         if self.connected {
-            while let Some(file) = self.pending_files.pop_front() {
-                self.add_flow
-                    .push(crate::add_torrent::Source::File(file), String::new());
+            while let Some(source) = self.pending_additions.pop_front() {
+                self.add_flow.push(source, String::new());
             }
         }
     }
@@ -633,14 +638,28 @@ impl ClientApp {
         }
     }
     fn dialogs(&mut self, ctx: &egui::Context) {
-        if !self.connected && !self.pending_files.is_empty() {
-            egui::Window::new("Торренты ожидают подключения").id(egui::Id::new(("pending-files", self.tab_id))).collapsible(false).default_width(450.0).show(ctx,|ui|{
-                ui.label(format!("Файлов: {} · сервер: {}",self.pending_files.len(),self.settings.server_name));
-                ui.label("После подключения откроется диалог выбора файлов. Добавление на сервер выполняется только после подтверждения.");
-                egui::ScrollArea::vertical().max_height(150.0).show(ui,|ui|{for file in &self.pending_files{ui.label(file.file_name().unwrap_or_default().to_string_lossy());}});
-                if self.connecting {ui.spinner();}else if ui.button("Настроить подключение").clicked(){self.settings_open=true;}
-                if ui.button("Отменить добавление файлов").clicked(){self.pending_files.clear();}
-            });
+        if !self.connected && !self.pending_additions.is_empty() {
+            egui::Window::new("Торренты ожидают подключения")
+                .id(egui::Id::new(("pending-files", self.tab_id)))
+                .collapsible(false)
+                .default_width(450.0)
+                .show(ctx, |ui| {
+                    ui.label(format!("Торрентов: {} · сервер: {}", self.pending_additions.len(), self.settings.server_name));
+                    ui.label("После подключения откроется диалог выбора файлов. Добавление на сервер выполняется после подтверждения.");
+                    egui::ScrollArea::vertical().max_height(150.0).show(ui, |ui| {
+                        for source in &self.pending_additions {
+                            ui.label(source.label());
+                        }
+                    });
+                    if self.connecting {
+                        ui.spinner();
+                    } else if ui.button("Настроить подключение").clicked() {
+                        self.settings_open = true;
+                    }
+                    if ui.button("Отменить добавление").clicked() {
+                        self.pending_additions.clear();
+                    }
+                });
         }
         let palette = crate::theme::palette(ctx);
         egui::Window::new("О программе")
@@ -1111,7 +1130,7 @@ impl ClientApp {
             self.send(command);
         }
         // Mirror native tray changes into eframe's cached viewport visibility.
-        #[cfg(any(windows, target_os = "macos"))]
+        #[cfg(windows)]
         if let Some(visible) = self
             .tray
             .as_ref()
@@ -1403,7 +1422,7 @@ impl ClientApp {
                 && !self.add_open
                 && self.delete.is_none()
             {
-                if ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::A)) {
+                if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::A)) {
                     self.selection.all(&ordered_hashes);
                     self.selected = ordered_hashes.first().cloned();
                 }
@@ -1462,16 +1481,11 @@ impl ClientApp {
                         .header(24.0, |mut header| {
                             for (index, c) in &visible {
                                 header.col(|ui| {
-                                    let title = if self.sort == *index {
-                                        format!(
-                                            "{} {}",
-                                            c.title,
-                                            if self.descending { "↓" } else { "↑" }
-                                        )
-                                    } else {
-                                        c.title.to_owned()
-                                    };
-                                    let response = column_header(ui, &title);
+                                    let response = column_header(
+                                        ui,
+                                        c,
+                                        (self.sort == *index).then_some(self.descending),
+                                    );
                                     if response.drag_started() {
                                         self.dragged_column = Some(c.key.to_owned());
                                     }
@@ -1700,20 +1714,49 @@ fn torrent_panel(
         .show(ctx, contents)
 }
 
-fn column_header(ui: &mut egui::Ui, title: &str) -> egui::Response {
+fn column_header(
+    ui: &mut egui::Ui,
+    column: &crate::columns::TorrentColumn,
+    sort_descending: Option<bool>,
+) -> egui::Response {
     let palette = crate::theme::palette(ui.ctx());
     let (rect, response) =
         ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
     if response.hovered() || response.dragged() {
         ui.painter().rect_filled(rect, 3.0, palette.hover);
     }
-    ui.painter().text(
-        rect.left_center() + egui::vec2(4.0, 0.0),
-        egui::Align2::LEFT_CENTER,
-        title,
+    let painter = ui.painter().with_clip_rect(rect);
+    let center_y = rect.center().y;
+    let draw_arrow = |x, down| {
+        let half = if down { 4.5 } else { -4.5 };
+        painter.arrow(
+            egui::pos2(x, center_y - half),
+            egui::vec2(0.0, 2.0 * half),
+            egui::Stroke::new(1.25_f32, palette.muted),
+        );
+    };
+    let mut left = rect.left() + 4.0;
+    if matches!(column.key, "dlspeed" | "upspeed") {
+        draw_arrow(left + 3.0, column.key == "dlspeed");
+        left += 10.0;
+    }
+    let title = painter.layout_no_wrap(
+        column.title.to_owned(),
         egui::FontId::proportional(13.0),
         palette.muted,
     );
+    let text_pos = egui::pos2(left, center_y - title.size().y / 2.0);
+    if let Some(descending) = sort_descending {
+        let arrow_x = (left + title.size().x + 7.0).min(rect.right() - 6.0);
+        let text_clip =
+            egui::Rect::from_min_max(rect.min, egui::pos2(arrow_x - 4.0, rect.bottom()));
+        painter
+            .with_clip_rect(text_clip)
+            .galley(text_pos, title, palette.muted);
+        draw_arrow(arrow_x, descending);
+    } else {
+        painter.galley(text_pos, title, palette.muted);
+    }
     response
         .on_hover_cursor(egui::CursorIcon::Grab)
         .on_hover_text("Щелчок — сортировка. Перетащите заголовок для перестановки колонок.")
@@ -2132,6 +2175,48 @@ mod tests {
     }
 
     #[test]
+    fn column_headers_draw_transfer_and_sort_arrows_without_text_glyphs() {
+        use crate::columns::COLUMNS;
+
+        for (index, sort, directions) in [
+            (0, Some(false), vec![-1.0]),
+            (0, Some(true), vec![1.0]),
+            (4, None, vec![1.0]),
+            (5, Some(true), vec![-1.0, 1.0]),
+        ] {
+            let ctx = egui::Context::default();
+            let column = &COLUMNS[index];
+            let mut header_rect = egui::Rect::NOTHING;
+            let output = ctx.run(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    ui.allocate_ui(egui::vec2(60.0, 24.0), |ui| {
+                        header_rect = column_header(ui, column, sort).rect;
+                    });
+                });
+            });
+            let mut drawn = Vec::new();
+            let mut found_title = false;
+            for clipped in output.shapes {
+                match clipped.shape {
+                    egui::Shape::LineSegment { points, stroke }
+                        if stroke.width == 1.25 && points[0].x == points[1].x =>
+                    {
+                        assert!(points.iter().all(|point| header_rect.contains(*point)));
+                        drawn.push((points[1].y - points[0].y).signum());
+                    }
+                    egui::Shape::Text(text) => {
+                        assert_eq!(text.galley.text(), column.title);
+                        found_title = true;
+                    }
+                    _ => {}
+                }
+            }
+            assert!(found_title);
+            assert_eq!(drawn, directions);
+        }
+    }
+
+    #[test]
     fn header_blank_area_clicks_and_drag_does_not_click() {
         for drag in [false, true] {
             let ctx = egui::Context::default();
@@ -2171,7 +2256,8 @@ mod tests {
                             .columns(Column::initial(200.0), 2)
                             .header(24.0, |mut row| {
                                 row.col(|ui| {
-                                    let response = column_header(ui, "Имя");
+                                    let response =
+                                        column_header(ui, &crate::columns::COLUMNS[0], None);
                                     if frame == 0 {
                                         target =
                                             response.rect.right_center() - egui::vec2(30.0, 0.0);
@@ -2180,7 +2266,8 @@ mod tests {
                                     dragged |= response.drag_started();
                                 });
                                 row.col(|ui| {
-                                    let response = column_header(ui, "Размер");
+                                    let response =
+                                        column_header(ui, &crate::columns::COLUMNS[1], None);
                                     if frame == 3 {
                                         drop_hovered = response.contains_pointer();
                                     }

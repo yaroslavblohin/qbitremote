@@ -18,6 +18,8 @@ mod file_associations;
 mod file_icons;
 mod graphs;
 mod icon;
+#[cfg(target_os = "macos")]
+mod macos_app;
 mod model;
 mod path_mapping;
 mod priority;
@@ -77,6 +79,8 @@ fn main() -> eframe::Result {
             return Ok(());
         }
     };
+    #[cfg(target_os = "macos")]
+    macos_app::install();
     #[cfg(windows)]
     let _instance = match single_instance::InstanceGuard::acquire() {
         Ok(Some(guard)) => guard,

@@ -60,8 +60,8 @@ impl TabbedApp {
         self.current.start_hidden(ctx);
     }
 
-    pub fn open_files(&mut self, files: Vec<std::path::PathBuf>) {
-        self.current.open_files(files);
+    pub fn open_sources(&mut self, sources: Vec<crate::add_torrent::Source>) {
+        self.current.queue_additions(sources);
     }
 
     #[cfg(all(feature = "ui-smoke", windows))]

@@ -2,7 +2,7 @@
 pub struct FileIcon {
     pub resource: u32,
     pub title: &'static str,
-    png: &'static [u8],
+    pub png: &'static [u8],
 }
 
 pub const ICONS: &[FileIcon] = &[

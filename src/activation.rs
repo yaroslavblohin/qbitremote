@@ -1,26 +1,76 @@
 //! File validation shared by startup and native shell activation.
-use std::{ffi::OsString, path::PathBuf};
+use crate::add_torrent::Source;
+use std::{ffi::OsString, io::Read, path::PathBuf};
 
-pub fn files(args: impl IntoIterator<Item = OsString>) -> Result<Vec<PathBuf>, String> {
-    let mut files = Vec::new();
+pub fn requests(args: impl IntoIterator<Item = OsString>) -> Result<Vec<Source>, String> {
+    let mut requests = Vec::new();
     for arg in args {
-        let path = PathBuf::from(arg);
-        if !path
-            .extension()
-            .is_some_and(|s| s.eq_ignore_ascii_case("torrent"))
-        {
-            return Err(format!("Поддерживаются файлы .torrent: {}", path.display()));
-        }
-        let path = std::fs::canonicalize(&path)
-            .map_err(|e| format!("Не удалось открыть {}: {e}", path.display()))?;
-        if !path.is_file() {
-            return Err(format!("Это не файл: {}", path.display()));
-        }
-        if !files.contains(&path) {
-            files.push(path);
+        let source = if let Some(source) = arg.to_str().and_then(magnet_link) {
+            source
+        } else {
+            file_request(arg.into())?
+        };
+        if !requests.contains(&source) {
+            requests.push(source);
         }
     }
-    Ok(files)
+    Ok(requests)
+}
+
+pub fn file_request(path: PathBuf) -> Result<Source, String> {
+    let extension = path.extension().unwrap_or_default();
+    let is_magnet = extension.eq_ignore_ascii_case("magnet");
+    if !is_magnet && !extension.eq_ignore_ascii_case("torrent") {
+        return Err(format!(
+            "Поддерживаются файлы .torrent и .magnet: {}",
+            path.display()
+        ));
+    }
+    let path = std::fs::canonicalize(&path)
+        .map_err(|e| format!("Не удалось открыть {}: {e}", path.display()))?;
+    if !path.is_file() {
+        return Err(format!("Это не файл: {}", path.display()));
+    }
+    if is_magnet {
+        read_magnet_file(&path)
+    } else {
+        Ok(Source::File(path))
+    }
+}
+
+pub fn magnet_link(value: &str) -> Option<Source> {
+    let url = url::Url::parse(value)
+        .ok()
+        .filter(|url| url.scheme() == "magnet")?;
+    Some(Source::Link {
+        url: url.into(),
+        downloader: String::new(),
+    })
+}
+
+fn read_magnet_file(path: &std::path::Path) -> Result<Source, String> {
+    const LIMIT: usize = 64 * 1024;
+    let mut data = Vec::new();
+    std::fs::File::open(path)
+        .and_then(|file| file.take((LIMIT + 1) as u64).read_to_end(&mut data))
+        .map_err(|e| format!("Не удалось прочитать {}: {e}", path.display()))?;
+    let invalid = || format!("Файл {} должен содержать magnet-ссылку", path.display());
+    if data.len() > LIMIT {
+        return Err(invalid());
+    }
+    let text = std::str::from_utf8(&data).map_err(|_| invalid())?;
+    let text = text.trim_start_matches('\u{feff}').trim();
+    let mut lines = text.lines();
+    let first = lines.next().unwrap_or_default().trim();
+    let candidate = if first.eq_ignore_ascii_case("[InternetShortcut]") {
+        lines.find_map(|line| {
+            let (key, value) = line.split_once('=')?;
+            key.trim().eq_ignore_ascii_case("URL").then(|| value.trim())
+        })
+    } else {
+        lines.next().is_none().then_some(first)
+    };
+    candidate.and_then(magnet_link).ok_or_else(invalid)
 }
 
 #[cfg(windows)]
@@ -276,13 +326,34 @@ mod tests {
             std::env::temp_dir().join(format!("qbit-открыть {}.TORRENT", std::process::id()));
         std::fs::write(&path, b"test").unwrap();
         assert_eq!(
-            files([path.clone().into_os_string(), path.clone().into_os_string()])
+            requests([path.clone().into_os_string(), path.clone().into_os_string()])
                 .unwrap()
                 .len(),
             1
         );
         std::fs::remove_file(&path).unwrap();
-        assert!(files([path.into_os_string()]).is_err());
-        assert!(files([OsString::from("wrong.txt")]).is_err());
+        assert!(requests([path.into_os_string()]).is_err());
+        assert!(requests([OsString::from("wrong.txt")]).is_err());
+    }
+
+    #[test]
+    fn opens_magnet_links_and_shortcuts() {
+        let path = std::env::temp_dir().join(format!("qbit ссылка {}.MAGNET", std::process::id()));
+        let link = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567";
+        for content in [
+            format!("\u{feff}{link}\n"),
+            format!("[InternetShortcut]\r\nURL={link}\r\n"),
+        ] {
+            std::fs::write(&path, content).unwrap();
+            assert_eq!(
+                requests([path.clone().into_os_string(), OsString::from(link)]).unwrap(),
+                [magnet_link(link).unwrap()]
+            );
+        }
+        for content in ["https://example.com".to_owned(), "x".repeat(64 * 1024 + 1)] {
+            std::fs::write(&path, content).unwrap();
+            assert!(file_request(path.clone()).is_err());
+        }
+        std::fs::remove_file(path).unwrap();
     }
 }

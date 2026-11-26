@@ -20,6 +20,8 @@ mod graphs;
 mod icon;
 #[cfg(target_os = "macos")]
 mod macos_app;
+#[cfg(target_os = "macos")]
+mod macos_settings;
 mod model;
 mod path_mapping;
 mod priority;
@@ -68,8 +70,8 @@ fn main() -> eframe::Result {
     };
     #[cfg(windows)]
     let args = if autostart { Vec::new() } else { args };
-    let launch_files = match activation::files(args) {
-        Ok(files) => files,
+    let launch_requests = match activation::requests(args) {
+        Ok(requests) => requests,
         Err(error) => {
             rfd::MessageDialog::new()
                 .set_title("Открытие торрента")
@@ -88,9 +90,12 @@ fn main() -> eframe::Result {
             if autostart {
                 return Ok(());
             }
-            let args = launch_files
+            let args = launch_requests
                 .into_iter()
-                .map(|p| p.into_os_string())
+                .map(|source| match source {
+                    add_torrent::Source::File(path) => path.into_os_string(),
+                    add_torrent::Source::Link { url, .. } => url.into(),
+                })
                 .collect::<Vec<_>>();
             if let Err(error) = activation::forward(&args) {
                 rfd::MessageDialog::new()
@@ -129,7 +134,7 @@ fn main() -> eframe::Result {
             if hidden {
                 app.start_hidden(&cc.egui_ctx);
             }
-            app.open_files(launch_files);
+            app.open_sources(launch_requests);
             #[cfg(all(feature = "ui-smoke", windows))]
             let app = smoke::SmokeApp::new(app, &cc.egui_ctx);
             Ok(Box::new(app))

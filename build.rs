@@ -16,11 +16,41 @@ fn main() {
     match env::var("CARGO_CFG_TARGET_OS").as_deref() {
         Ok("macos") => {
             println!("cargo:rerun-if-changed=src/macos_app.m");
-            cc::Build::new()
+            println!("cargo:rerun-if-changed=src/macos_settings.m");
+            let mut native = cc::Build::new();
+            native
                 .file("src/macos_app.m")
+                .file("src/macos_settings.m")
                 .flag("-fobjc-arc")
+                .flag("-fblocks")
                 .compile("qbit_macos");
+            // Rust omits Clang's default libraries. Objective-C availability checks need compiler-rt.
+            let runtime = native
+                .get_compiler()
+                .to_command()
+                .arg("-print-file-name=libclang_rt.osx.a")
+                .output()
+                .expect("Cannot locate the macOS Clang runtime");
+            assert!(
+                runtime.status.success(),
+                "Cannot locate the macOS Clang runtime"
+            );
+            let path = String::from_utf8(runtime.stdout).expect("Invalid Clang runtime path");
+            let path = std::path::Path::new(path.trim());
+            assert!(
+                path.is_file(),
+                "Missing Clang runtime at {}",
+                path.display()
+            );
+            println!(
+                "cargo:rustc-link-search=native={}",
+                path.parent().unwrap().display()
+            );
+            println!("cargo:rustc-link-lib=static=clang_rt.osx");
             println!("cargo:rustc-link-lib=framework=AppKit");
+            println!("cargo:rustc-link-lib=framework=CoreServices");
+            println!("cargo:rustc-link-lib=framework=ServiceManagement");
+            println!("cargo:rustc-link-lib=framework=UniformTypeIdentifiers");
             return;
         }
         Ok("windows") => {}

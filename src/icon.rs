@@ -8,6 +8,12 @@ fn rgba(size: u32) -> Vec<u8> {
 }
 
 pub fn window() -> egui::IconData {
+    // An empty icon tells eframe to use the macOS bundle's Dock icon.
+    #[cfg(target_os = "macos")]
+    if crate::macos_settings::has_app_bundle() {
+        return egui::IconData::default();
+    }
+
     egui::IconData {
         rgba: system_rgba(64),
         width: 64,

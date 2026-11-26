@@ -1,6 +1,50 @@
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 #[path = "torrent_icons.rs"]
 mod torrent_icons;
+
+#[cfg(any(windows, target_os = "macos"))]
+fn icon_picker(ui: &mut eframe::egui::Ui) -> &'static torrent_icons::FileIcon {
+    use eframe::egui;
+    let id = egui::Id::new("torrent-file-icon-resource");
+    let icons = torrent_icons::ICONS;
+    let saved = ui.ctx().data_mut(|data| data.get_persisted::<u32>(id));
+    let mut selected = icons
+        .iter()
+        .find(|icon| Some(icon.resource) == saved)
+        .unwrap_or(&icons[0]);
+    ui.label("Значок файлов .torrent и .magnet");
+    ui.horizontal_wrapped(|ui| {
+        for icon in icons {
+            let texture_id = id.with(icon.resource);
+            let ctx = ui.ctx();
+            let cached = ctx.data(|data| data.get_temp::<egui::TextureHandle>(texture_id));
+            let texture = cached.unwrap_or_else(|| {
+                // load_texture also reads the context, so do it outside a data lock.
+                let rgba = torrent_icons::resize(&icon.decode(), 128);
+                let color = egui::ColorImage::from_rgba_unmultiplied([128, 128], &rgba);
+                let texture = ctx.load_texture(icon.title, color, egui::TextureOptions::LINEAR);
+                ctx.data_mut(|data| data.insert_temp(texture_id, texture.clone()));
+                texture
+            });
+            if ui
+                .add(
+                    egui::ImageButton::new(
+                        egui::Image::new(&texture).fit_to_exact_size(egui::vec2(48.0, 48.0)),
+                    )
+                    .selected(selected.resource == icon.resource),
+                )
+                .on_hover_text(icon.title)
+                .clicked()
+            {
+                selected = icon;
+            }
+        }
+    });
+    ui.ctx()
+        .data_mut(|data| data.insert_persisted(id, selected.resource));
+    selected
+}
+
 #[cfg(windows)]
 pub fn ui(ui: &mut eframe::egui::Ui) {
     use eframe::egui;
@@ -9,25 +53,9 @@ pub fn ui(ui: &mut eframe::egui::Ui) {
     let section = eframe::egui::CollapsingHeader::new("Значок и ассоциации файлов")
         .default_open(preview)
         .show(ui, |ui| {
-        let id = egui::Id::new("torrent-file-icon-resource");
-        let mut selected = ui.ctx().data_mut(|d| d.get_persisted::<u32>(id).unwrap_or(2));
-        if !torrent_icons::ICONS.iter().any(|icon| icon.resource == selected) { selected = 2; }
-        ui.label("Значок .torrent:");
-        ui.horizontal_wrapped(|ui| {
-            for icon in torrent_icons::ICONS {
-                let texture_id = id.with(icon.resource);
-                let texture = ui.ctx().data_mut(|d| d.get_temp::<egui::TextureHandle>(texture_id)).unwrap_or_else(|| {
-                    let rgba = torrent_icons::resize(&icon.decode(), 128);
-                    let t = ui.ctx().load_texture(icon.title, egui::ColorImage::from_rgba_unmultiplied([128, 128], &rgba), egui::TextureOptions::LINEAR);
-                    ui.ctx().data_mut(|d| d.insert_temp(texture_id, t.clone()));
-                    t
-                });
-                if ui.add(egui::ImageButton::new(egui::Image::new(&texture).fit_to_exact_size(egui::vec2(48.0, 48.0))).selected(selected == icon.resource)).on_hover_text(icon.title).clicked() { selected = icon.resource; }
-            }
-        });
-        ui.ctx().data_mut(|d| d.insert_persisted(id, selected));
-        ui.small("Применение регистрирует qBit Remote для .torrent и magnet-ссылок. Выберите его по умолчанию в настройках Windows.");
-        let status_id = id.with("status");
+        let selected = icon_picker(ui).resource;
+        ui.small("Выберите значок для .torrent и .magnet. После регистрации назначьте qBit Remote для этих файлов и magnet-ссылок в настройках Windows.");
+        let status_id = egui::Id::new("torrent-file-icon-resource").with("status");
         if ui.button("Применить значок и зарегистрировать ассоциации").clicked() {
             let result = register(selected).map(|()| "Регистрация обновлена. Выберите qBit Remote в настройках Windows.".to_owned()).unwrap_or_else(|e| e);
             ui.ctx().data_mut(|d| d.insert_temp(status_id, result));
@@ -66,6 +94,11 @@ fn register(resource: u32) -> Result<(), String> {
             "",
         ),
         (
+            "Software\\Classes\\Applications\\qbit-remote.exe\\SupportedTypes",
+            ".magnet",
+            "",
+        ),
+        (
             "Software\\Classes\\qBitRemote.Torrent",
             "",
             "Торрент qBit Remote",
@@ -83,6 +116,26 @@ fn register(resource: u32) -> Result<(), String> {
         (
             "Software\\Classes\\.torrent\\OpenWithProgids",
             "qBitRemote.Torrent",
+            "",
+        ),
+        (
+            "Software\\Classes\\qBitRemote.MagnetFile",
+            "",
+            "Magnet-файл qBit Remote",
+        ),
+        (
+            "Software\\Classes\\qBitRemote.MagnetFile\\DefaultIcon",
+            "",
+            icon.as_str(),
+        ),
+        (
+            "Software\\Classes\\qBitRemote.MagnetFile\\shell\\open\\command",
+            "",
+            command.as_str(),
+        ),
+        (
+            "Software\\Classes\\.magnet\\OpenWithProgids",
+            "qBitRemote.MagnetFile",
             "",
         ),
         (
@@ -110,6 +163,11 @@ fn register(resource: u32) -> Result<(), String> {
             "Software\\qBitRemote\\Capabilities\\FileAssociations",
             ".torrent",
             "qBitRemote.Torrent",
+        ),
+        (
+            "Software\\qBitRemote\\Capabilities\\FileAssociations",
+            ".magnet",
+            "qBitRemote.MagnetFile",
         ),
         (
             "Software\\qBitRemote\\Capabilities\\URLAssociations",
@@ -153,5 +211,86 @@ fn register(resource: u32) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub fn ui(ui: &mut eframe::egui::Ui) {
+    use eframe::egui;
+    egui::CollapsingHeader::new("Значок и ассоциации файлов").show(ui, |ui| {
+        let selected = icon_picker(ui).resource;
+        crate::macos_settings::association_ui(ui, selected);
+    });
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn ui(_ui: &mut eframe::egui::Ui) {}
+
+#[cfg(all(test, any(windows, target_os = "macos")))]
+mod tests {
+    use super::*;
+    use eframe::egui;
+
+    #[test]
+    fn opening_associations_loads_and_reuses_all_icon_previews() {
+        let ctx = egui::Context::default();
+        ctx.style_mut(|style| style.animation_time = 0.0);
+        let frame = |events| {
+            ctx.run(
+                egui::RawInput {
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, ui);
+                },
+            )
+        };
+        let collapsed = frame(vec![]);
+        let header = collapsed
+            .shapes
+            .iter()
+            .find_map(|entry| match &entry.shape {
+                egui::Shape::Text(text) if text.galley.text() == "Значок и ассоциации файлов" => {
+                    Some(text.pos + text.galley.size() / 2.0)
+                }
+                _ => None,
+            })
+            .unwrap();
+        let id = egui::Id::new("torrent-file-icon-resource");
+        let cached_icons = || {
+            ctx.data(|data| {
+                torrent_icons::ICONS
+                    .iter()
+                    .filter_map(|icon| {
+                        data.get_temp::<egui::TextureHandle>(id.with(icon.resource))
+                            .map(|texture| texture.id())
+                    })
+                    .collect::<Vec<_>>()
+            })
+        };
+        assert!(cached_icons().is_empty());
+        let click = |pressed| {
+            frame(vec![
+                egui::Event::PointerMoved(header),
+                egui::Event::PointerButton {
+                    pos: header,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ])
+        };
+        let _ = click(true);
+        let _ = click(false);
+        let loaded = cached_icons();
+        assert_eq!(loaded.len(), torrent_icons::ICONS.len());
+        let _ = click(true);
+        let _ = click(false);
+        let _ = click(true);
+        let reopened = click(false);
+        assert_eq!(cached_icons(), loaded);
+        assert!(reopened
+            .textures_delta
+            .set
+            .iter()
+            .all(|(id, _)| !loaded.contains(id)));
+    }
+}

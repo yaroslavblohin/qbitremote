@@ -359,9 +359,6 @@ impl ClientApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
         }
     }
-    pub fn open_files(&mut self, files: Vec<std::path::PathBuf>) {
-        self.queue_additions(files.into_iter().map(Source::File));
-    }
     fn queue_additions(&mut self, additions: impl IntoIterator<Item = Source>) {
         let mut additions = additions.into_iter().peekable();
         if additions.peek().is_none() {
@@ -390,8 +387,8 @@ impl ClientApp {
             _ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
             _ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
             _ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-            match crate::activation::files(args) {
-                Ok(files) => self.open_files(files),
+            match crate::activation::requests(args) {
+                Ok(sources) => self.queue_additions(sources),
                 Err(error) => {
                     self.notice = error;
                     self.is_error = true;
@@ -875,6 +872,8 @@ impl ClientApp {
                 );
                 #[cfg(windows)]
                 crate::autostart::ui(ui);
+                #[cfg(target_os = "macos")]
+                crate::macos_settings::login_ui(ui);
                 crate::file_associations::ui(ui);
                 zoom_control(ui, &mut self.settings.zoom, &mut self.zoom_preview);
                 ui.label(
@@ -923,18 +922,26 @@ impl ClientApp {
                         self.add_open = false;
                     }
                     if ui
-                        .add_enabled(self.connected, egui::Button::new("Выбрать .torrent…"))
+                        .add_enabled(
+                            self.connected,
+                            egui::Button::new("Выбрать .torrent или .magnet…"),
+                        )
                         .clicked()
                     {
                         if let Some(file) = rfd::FileDialog::new()
-                            .add_filter("Torrent", &["torrent"])
+                            .add_filter("BitTorrent", &["torrent", "magnet"])
                             .pick_file()
                         {
-                            self.add_flow.push(
-                                crate::add_torrent::Source::File(file),
-                                self.save_path.clone(),
-                            );
-                            self.add_open = false;
+                            match crate::activation::file_request(file) {
+                                Ok(source) => {
+                                    self.add_flow.push(source, self.save_path.clone());
+                                    self.add_open = false;
+                                }
+                                Err(error) => {
+                                    self.notice = error;
+                                    self.is_error = true;
+                                }
+                            }
                         }
                     }
                 });

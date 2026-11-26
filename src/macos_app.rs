@@ -71,16 +71,10 @@ pub fn take_open_requests() -> impl Iterator<Item = Result<Source, String>> {
         .into_iter()
         .map(|(value, is_file)| {
             if is_file {
-                let mut files = crate::activation::files([value])?;
-                return Ok(Source::File(files.remove(0)));
+                return crate::activation::file_request(value.into());
             }
             let url = value.into_string().map_err(|_| "Недопустимая ссылка")?;
-            if !url::Url::parse(&url).is_ok_and(|url| url.scheme() == "magnet") {
-                return Err("Поддерживаются только magnet-ссылки".into());
-            }
-            Ok(Source::Link {
-                url,
-                downloader: String::new(),
-            })
+            crate::activation::magnet_link(&url)
+                .ok_or_else(|| "Поддерживаются только magnet-ссылки".into())
         })
 }

@@ -1,6 +1,8 @@
 use crate::model::{Settings, Torrent};
 use reqwest::blocking::Client;
 use std::{
+    error::Error,
+    io,
     sync::mpsc::{self, Receiver, Sender},
     time::{Duration, Instant},
 };
@@ -510,6 +512,30 @@ fn command_reply(response: reqwest::blocking::Response) -> Result<String, String
 }
 
 fn error(e: reqwest::Error) -> String {
+    if e.is_timeout() {
+        return "Web UI не ответил вовремя.".into();
+    }
+    if e.is_connect() {
+        let cause = std::iter::successors(e.source(), |&cause| cause.source())
+            .find_map(|cause| cause.downcast_ref::<io::Error>());
+        match cause.map(io::Error::kind) {
+            Some(io::ErrorKind::ConnectionRefused) => {
+                return "Сервер отклонил соединение. Проверьте адрес, порт и запуск Web UI.".into();
+            }
+            Some(
+                io::ErrorKind::HostUnreachable
+                | io::ErrorKind::NetworkUnreachable
+                | io::ErrorKind::PermissionDenied,
+            ) => {
+                let message = "Не удалось получить сетевой доступ к серверу.";
+                #[cfg(target_os = "macos")]
+                return format!("{message} Для локального сервера проверьте доступ qBit Remote в разделе «Системные настройки → Конфиденциальность и безопасность → Локальная сеть».");
+                #[cfg(not(target_os = "macos"))]
+                return message.into();
+            }
+            _ => return "Не удалось установить соединение с Web UI.".into(),
+        }
+    }
     e.without_url().to_string()
 }
 
@@ -1432,5 +1458,24 @@ pub(crate) mod tests {
         )
         .is_err());
         server.join().unwrap();
+    }
+
+    #[test]
+    fn connection_refusal_reports_the_cause_without_exposing_the_url() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = format!("http://{}/private-prefix", listener.local_addr().unwrap());
+        drop(listener);
+        let result = Api::connect(
+            Settings {
+                address,
+                ..Default::default()
+            },
+            String::new(),
+        );
+        let Err(message) = result else {
+            panic!("Unexpected connection");
+        };
+        assert!(message.contains("Сервер отклонил соединение"), "{message}");
+        assert!(!message.contains("private-prefix"));
     }
 }

@@ -1,6 +1,6 @@
 # qBit Remote
 
-Клиент на Rust для управления **удалённым qBittorrent** через Web UI API. В папке `Release` доступны сборки **0.3.28 для Windows** и **0.3.27 для macOS**.
+Клиент на Rust для управления **удалённым qBittorrent** через Web UI API. Текущая версия **0.3.28** доступна для Windows x64 и macOS на Apple Silicon и Intel.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/readme-logo-dark.png">
@@ -11,14 +11,14 @@
 
 ## Быстрый запуск
 
-1. Скачайте сборку из папки `Release`. В Windows запустите EXE. На Mac распакуйте ZIP для своего процессора и перенесите `qBit Remote.app` в «Программы». [Windows x64](Release/qbit-remote.exe) · [Apple Silicon (arm64)](Release/qbit-remote-0.3.27-arm64.zip) · [Intel (amd64)](Release/qbit-remote-0.3.27-amd64.zip) · [Установка на macOS](docs/MACOS.md)
+1. Скачайте сборку из папки `Release`. В Windows запустите EXE. На Mac распакуйте ZIP для своего процессора и перенесите `qBit Remote.app` в «Программы». [Windows x64](Release/qbit-remote.exe) · [Apple Silicon (arm64)](Release/qbit-remote-0.3.28-arm64.zip) · [Intel (amd64)](Release/qbit-remote-0.3.28-amd64.zip) · [Установка на macOS](docs/MACOS.md)
 2. Включите Web UI на сервере qBittorrent и разрешите доступ с компьютера клиента.
 3. Создайте профиль подключения: адрес, имя пользователя и пароль. Поддерживаются адреса вида `https://seedbox.example.org` и пути reverse proxy, например `https://example.org/qbit/`.
 4. Нажмите «Подключиться». Список торрентов обновляется автоматически; ручное обновление доступно через «Файл → Обновить список».
 
 В 0.3.28 для отключённого сервера в списке торрентов доступна кнопка «Проверить подключение» с круговыми стрелками. Она повторяет подключение к серверу текущей вкладки. При успехе открывается список торрентов, при ошибке причина видна под кнопками. Кнопка с шестерёнкой и ключом открывает настройки подключения.
 
-[Снимок экрана подключения в 0.3.28](docs/screenshots/v0.3.28/connection.png)
+[Снимок экрана подключения в Windows 0.3.28](docs/screenshots/v0.3.28/connection.png)
 
 Автоподключение и сохранение пароля включены по умолчанию. В Windows пароль защищён DPAPI текущей учётной записи, на macOS используется Keychain. Cookie хранятся только в памяти. Для удалённого доступа используйте HTTPS или доверенный VPN: HTTP не шифрует учётные данные.
 
@@ -289,7 +289,7 @@ Remove-Item Env:QBIT_IMPORT_BRANDING
 
 ## macOS
 
-Версия 0.3.27 доступна для Apple Silicon (arm64) и Intel (amd64) с macOS 11 или новее. Скрипт `scripts/build-macos.sh` с флагом `--arm64` или `--amd64` создаёт ZIP в `dist-macos`. Готовые архивы лежат в `Release`. [Выпуск 0.3.27 на GitHub](https://github.com/yaroslavblohin/qbitremote/releases/tag/v0.3.27) · [Руководство для macOS](docs/MACOS.md) · [Сборки GitHub Actions](https://github.com/yaroslavblohin/qbitremote/actions/workflows/macos.yml)
+Версия 0.3.28 доступна для Apple Silicon (arm64) и Intel (amd64) с macOS 11 или новее. Скрипт `scripts/build-macos.sh` с флагом `--arm64` или `--amd64` создаёт ZIP в `dist-macos`. Готовые архивы лежат в `Release`. [Руководство для macOS](docs/MACOS.md) · [Сборки GitHub Actions](https://github.com/yaroslavblohin/qbitremote/actions/workflows/macos.yml)
 
 ## Структура проекта
 
